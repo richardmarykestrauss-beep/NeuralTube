@@ -1,0 +1,183 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: {uid}
+    // Fields:
+    //   - uid: string (required) - User ID
+    //   - email: string (required, email format) - User email
+    //   - displayName: string (optional) - User display name
+    //   - photoURL: string (optional, url format) - User photo URL
+    //   - role: string (required, enum: ['admin', 'user']) - User role
+    //   - createdAt: timestamp (optional) - Creation time
+    //
+    // Collection: trends
+    // Document ID: auto-generated
+    // Fields:
+    //   - topic: string (required, max 100) - Trend topic
+    //   - score: number (required, 0-100) - Trend score
+    //   - velocity: string (required, max 20) - Trend velocity
+    //   - niche: string (required, max 50) - Trend niche
+    //   - revenue: string (optional, max 50) - Revenue potential
+    //   - status: string (required, enum: ['hot', 'rising']) - Trend status
+    //   - updatedAt: timestamp (optional) - Last update
+    //
+    // Collection: videos
+    // Document ID: auto-generated
+    // Fields:
+    //   - title: string (required, max 200) - Video title
+    //   - stage: string (required, enum: ['research', 'scripting', 'voiceover', 'rendering', 'published', 'queued', 'error']) - Pipeline stage
+    //   - progress: number (optional, 0-100) - Progress percentage
+    //   - eta: string (optional, max 50) - ETA
+    //   - scheduled: string (optional, max 50) - Scheduled time
+    //   - views: string (optional, max 50) - Views count
+    //   - revenue: string (optional, max 50) - Revenue earned
+    //   - authorUid: string (required) - Creator UID
+    //   - createdAt: timestamp (optional) - Creation time
+    //
+    // Collection: ai_logs
+    // Document ID: auto-generated
+    // Fields:
+    //   - event: string (required, max 500) - Event description
+    //   - type: string (required, enum: ['info', 'success', 'warning', 'error']) - Log type
+    //   - timestamp: timestamp (required) - Log time
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+         (request.auth.token.email == "richardmaryke.strauss@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function isValidUrl(url) {
+      return url is string && (url.matches("^https://.*") || url.matches("^http://.*"));
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidUser(data) {
+      return hasRequiredFields(['uid', 'email', 'role']) &&
+             data.uid == request.auth.uid &&
+             isValidEmail(data.email) &&
+             data.role in ['admin', 'user'] &&
+             (!('displayName' in data) || (data.displayName is string && data.displayName.size() < 100)) &&
+             (!('photoURL' in data) || isValidUrl(data.photoURL)) &&
+             (!('youtubeConnected' in data) || data.youtubeConnected is bool) &&
+             (!('youtubeChannelId' in data) || (data.youtubeChannelId is string && data.youtubeChannelId.size() < 100)) &&
+             (!('youtubeChannelTitle' in data) || (data.youtubeChannelTitle is string && data.youtubeChannelTitle.size() < 200)) &&
+             (!('youtubeApiKey' in data) || (data.youtubeApiKey is string && data.youtubeApiKey.size() < 200)) &&
+             (!('createdAt' in data) || data.createdAt is timestamp);
+    }
+
+    function isValidTrend(data) {
+      return hasRequiredFields(['topic', 'score', 'velocity', 'niche', 'status']) &&
+             data.topic is string && data.topic.size() < 100 &&
+             data.score is number && data.score >= 0 && data.score <= 100 &&
+             data.velocity is string && data.velocity.size() < 20 &&
+             data.niche is string && data.niche.size() < 50 &&
+             data.status in ['hot', 'rising', 'stable'] &&
+             (!('volume' in data) || (data.volume is string && data.volume.size() < 100)) &&
+             (!('competition' in data) || (data.competition is string && data.competition.size() < 100)) &&
+             (!('potential' in data) || (data.potential is string && data.potential.size() < 100)) &&
+             (!('revenue' in data) || (data.revenue is string && data.revenue.size() < 50)) &&
+             (!('updatedAt' in data) || data.updatedAt is timestamp);
+    }
+
+    function isValidVideo(data) {
+      return hasRequiredFields(['title', 'stage', 'authorUid']) &&
+             data.title is string && data.title.size() < 200 &&
+             data.stage in ['research', 'ideation', 'scripting', 'voiceover', 'visuals', 'thumbnail', 'seo', 'review', 'publish', 'error'] &&
+             data.authorUid is string &&
+             (!('progress' in data) || (data.progress is number && data.progress >= 0 && data.progress <= 100)) &&
+             (!('eta' in data) || (data.eta is string && data.eta.size() < 50)) &&
+             (!('scheduled' in data) || (data.scheduled is string && data.scheduled.size() < 50)) &&
+             (!('views' in data) || (data.views is string && data.views.size() < 50)) &&
+             (!('revenue' in data) || (data.revenue is string && data.revenue.size() < 50)) &&
+             (!('niche' in data) || (data.niche is string && data.niche.size() < 100)) &&
+             (!('createdAt' in data) || data.createdAt is timestamp) &&
+             (!('updatedAt' in data) || data.updatedAt is timestamp);
+    }
+
+    function isValidAILog(data) {
+      return hasRequiredFields(['event', 'type', 'timestamp']) &&
+             data.event is string && data.event.size() < 500 &&
+             data.type in ['info', 'success', 'warning', 'error'] &&
+             data.timestamp is timestamp;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isOwner(userId) && isValidUser(request.resource.data) && request.resource.data.role == 'user';
+      allow update: if (isOwner(userId) || isAdmin()) && isValidUser(request.resource.data) && 
+                      (isAdmin() || request.resource.data.role == resource.data.role);
+    }
+
+    match /trends/{trendId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && isValidTrend(request.resource.data);
+    }
+
+    match /videos/{videoId} {
+      allow read: if isAuthenticated() && (resource.data.authorUid == request.auth.uid || isAdmin());
+      allow create: if isAuthenticated() && isValidVideo(request.resource.data) && request.resource.data.authorUid == request.auth.uid;
+      allow update: if isAuthenticated() && isValidVideo(request.resource.data) && 
+                      (resource.data.authorUid == request.auth.uid || isAdmin()) &&
+                      request.resource.data.authorUid == resource.data.authorUid;
+      allow delete: if isAuthenticated() && (resource.data.authorUid == request.auth.uid || isAdmin());
+    }
+
+    match /ai_logs/{logId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && isValidAILog(request.resource.data);
+    }
+
+    match /revenue/{revenueId} {
+      allow read: if isAuthenticated();
+    }
+
+    match /niches/{nicheId} {
+      allow read: if isAuthenticated();
+    }
+
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

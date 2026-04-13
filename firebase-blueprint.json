@@ -1,0 +1,114 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile and settings for the Command Center.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Unique identifier for the user." },
+        "email": { "type": "string", "format": "email", "description": "User's email address." },
+        "displayName": { "type": "string", "description": "User's display name." },
+        "photoURL": { "type": "string", "description": "User's profile photo URL." },
+        "role": { "type": "string", "enum": ["admin", "user"], "description": "User's role in the system." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "When the user account was created." }
+      },
+      "required": ["uid", "email", "role"]
+    },
+    "Trend": {
+      "title": "Trend",
+      "description": "A trending topic or niche identified by the Trend Scanner.",
+      "type": "object",
+      "properties": {
+        "topic": { "type": "string", "description": "The name of the trending topic." },
+        "score": { "type": "number", "description": "Trend score (0-100)." },
+        "velocity": { "type": "string", "description": "Growth velocity (e.g., '+340%')." },
+        "niche": { "type": "string", "description": "The niche category (e.g., 'Tech')." },
+        "revenue": { "type": "string", "description": "Estimated revenue potential (e.g., '$4.2K/day')." },
+        "status": { "type": "string", "enum": ["hot", "rising"], "description": "Trend status." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Last time the trend was scanned." }
+      },
+      "required": ["topic", "score", "velocity", "niche", "status"]
+    },
+    "Video": {
+      "title": "Video",
+      "description": "A video project in the Content Pipeline.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "description": "The title of the video." },
+        "stage": { "type": "string", "enum": ["research", "scripting", "voiceover", "rendering", "published", "queued", "error"], "description": "Current stage in the pipeline." },
+        "progress": { "type": "number", "description": "Completion percentage (0-100)." },
+        "eta": { "type": "string", "description": "Estimated time of completion." },
+        "scheduled": { "type": "string", "description": "Scheduled publish time." },
+        "views": { "type": "string", "description": "Views count (if published)." },
+        "revenue": { "type": "string", "description": "Revenue earned (if published)." },
+        "time": { "type": "string", "description": "Time since published." },
+        "authorUid": { "type": "string", "description": "UID of the user who created the video." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "When the video project was created." }
+      },
+      "required": ["title", "stage", "authorUid"]
+    },
+    "AILog": {
+      "title": "AI Log",
+      "description": "A log entry for the AI Engine Status and Activity Feed.",
+      "type": "object",
+      "properties": {
+        "event": { "type": "string", "description": "The event description." },
+        "type": { "type": "string", "enum": ["info", "success", "warning", "error"], "description": "Log type." },
+        "timestamp": { "type": "string", "format": "date-time", "description": "When the event occurred." }
+      },
+      "required": ["event", "type", "timestamp"]
+    },
+    "Niche": {
+      "title": "Niche",
+      "description": "A niche analyzed by the Niche Analyzer.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "channels": { "type": "number" },
+        "avgRPM": { "type": "string" },
+        "saturation": { "type": "number" },
+        "opportunity": { "type": "number" },
+        "topGap": { "type": "string" },
+        "monthlyRev": { "type": "string" }
+      },
+      "required": ["name", "channels", "avgRPM", "saturation", "opportunity", "topGap", "monthlyRev"]
+    },
+    "RevenuePoint": {
+      "title": "Revenue Point",
+      "description": "A data point for the revenue chart.",
+      "type": "object",
+      "properties": {
+        "day": { "type": "string" },
+        "revenue": { "type": "number" },
+        "views": { "type": "number" }
+      },
+      "required": ["day", "revenue", "views"]
+    }
+  },
+  "firestore": {
+    "/users/{uid}": {
+      "schema": "User",
+      "description": "User profiles."
+    },
+    "/trends": {
+      "schema": "Trend",
+      "description": "Global trending topics."
+    },
+    "/videos": {
+      "schema": "Video",
+      "description": "Video projects in the pipeline."
+    },
+    "/ai_logs": {
+      "schema": "AILog",
+      "description": "System activity logs."
+    },
+    "/niches": {
+      "schema": "Niche",
+      "description": "Analyzed niches."
+    },
+    "/revenue": {
+      "schema": "RevenuePoint",
+      "description": "Revenue tracking data."
+    }
+  }
+}
