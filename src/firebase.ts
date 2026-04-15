@@ -1,25 +1,18 @@
-import { initializeApp } from 'firebase/app';
-import { getAuth } from 'firebase/auth';
-import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
-import firebaseConfig from '../firebase-applet-config.json';
+import { initializeApp } from "firebase/app";
+import { getAuth } from "firebase/auth";
+import { getFirestore } from "firebase/firestore";
 
-// Initialize Firebase SDK
+const firebaseConfig = {
+  apiKey: "AIzaSyBzIOnDY_6tcPUNwjhnmkUWjhtXQJRHF40",
+  authDomain: "neuraltube-app.firebaseapp.com",
+  projectId: "neuraltube-app",
+  storageBucket: "neuraltube-app.firebasestorage.app",
+  messagingSenderId: "562764282076",
+  appId: "1:562764282076:web:0c9e988b1a250958669c19",
+  measurementId: "G-99KW61B498"
+};
+
 const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth(app);
-
-// Validate Connection to Firestore
-async function testConnection() {
-  try {
-    // We use a dummy doc to test connection
-    await getDocFromServer(doc(db, '_system_', 'connection_test'));
-    console.log("Firebase connection established.");
-  } catch (error) {
-    if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.error("Please check your Firebase configuration. The client is offline.");
-    }
-    // Skip logging for other errors (like 404 or permission denied) as this is just a connection test
-  }
-}
-
-testConnection();
+export const db = getFirestore(app);
+export default app;

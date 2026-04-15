@@ -1,3 +1,4 @@
+import cron from 'node-cron';
 import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
@@ -64,7 +65,7 @@ async function startServer() {
                 window.opener.postMessage({ 
                   type: 'YOUTUBE_AUTH_SUCCESS', 
                   tokens: ${JSON.stringify(tokens)} 
-                }, '*');
+                }, process.env.APP_URL || 'http://localhost:3000');
                 window.close();
               } else {
                 window.location.href = '/';
@@ -82,7 +83,7 @@ async function startServer() {
 
   // YouTube Upload API
   app.post("/api/youtube/upload", async (req, res) => {
-    const { tokens, title, description, niche } = req.body;
+    const { tokens, title, description, niche, videoId: vidId } = req.body;
     
     if (!tokens) {
       return res.status(401).json({ error: "YouTube not connected" });
@@ -92,12 +93,11 @@ async function startServer() {
       oauth2Client.setCredentials(tokens);
       const youtube = google.youtube({ version: "v3", auth: oauth2Client });
 
-      const placeholderVideoUrl = "https://www.w3schools.com/html/mov_bbb.mp4";
-      const videoStream = await axios({
-        method: 'get',
-        url: placeholderVideoUrl,
-        responseType: 'stream'
-      });
+      const videoFilePath = path.join(process.cwd(), 'public', 'assets', `final_${vidId}.mp4`);
+      if (!fs.existsSync(videoFilePath)) {
+        return res.status(404).json({ error: "Rendered video file not found" });
+      }
+      const videoStream = fs.createReadStream(videoFilePath);
 
       const uploadResponse = await youtube.videos.insert({
         part: ["snippet", "status"],
@@ -194,7 +194,19 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
+  
+cron.schedule('0 8 * * *', async () => {
+  console.log('Running daily automation...');
+  try {
+    const trends = await scanForTrends("Technology");
+    const bestTrend = trends[0];
+    if (!bestTrend) return;
+    console.log('Automation triggered for:', bestTrend.topic);
+  } catch (error) {
+    console.error('Automation failed:', error);
+  }
+});
+app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });
 }

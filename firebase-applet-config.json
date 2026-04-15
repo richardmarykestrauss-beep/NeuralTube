@@ -1,10 +1,8 @@
 {
-  "projectId": "gen-lang-client-0441872228",
-  "appId": "1:701372508394:web:e873e5839d0caca2054f93",
-  "apiKey": "AIzaSyCqNANyHBlmAX12Gtn0TmcKyWOApfBRe4Q",
-  "authDomain": "gen-lang-client-0441872228.firebaseapp.com",
-  "firestoreDatabaseId": "ai-studio-2cfbeb74-c2dc-4702-a4da-f21907e3a2ca",
-  "storageBucket": "gen-lang-client-0441872228.firebasestorage.app",
-  "messagingSenderId": "701372508394",
-  "measurementId": ""
+  "apiKey": "AIzaSyBzIOnDY_6tcPUNwjhnmkUWjhtXQJRHF40",
+  "authDomain": "neuraltube-app.firebaseapp.com",
+  "projectId": "neuraltube-app",
+  "storageBucket": "neuraltube-app.firebasestorage.app",
+  "messagingSenderId": "562764282076",
+  "appId": "1:562764282076:web:0c9e988b1a250958669c19"
 }
