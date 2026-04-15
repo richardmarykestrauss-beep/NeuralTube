@@ -10,7 +10,8 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "vercel_build": "vite build"
   },
   "dependencies": {
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
