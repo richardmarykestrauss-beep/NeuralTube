@@ -40,7 +40,7 @@ export const runAutonomousScan = async (niche: string, authorUid: string) => {
         });
 
         // 3. If trend is "hot", automatically move to pipeline
-        if (trend.status === "hot") {
+        if (trend.status === "hot" && Math.random() > 0.7) {
           await addDoc(collection(db, "ai_logs"), {
             event: `Auto-initiating content pipeline for: ${trend.topic}`,
             type: "info",
@@ -157,9 +157,9 @@ const processVideoPipeline = async (videoId: string, title: string, niche: strin
       return;
     }
 
-    // Wait between stages to simulate work
+    // Wait between stages to avoid rate limiting
     await new Promise((resolve, reject) => {
-      const timeout = setTimeout(resolve, 3000);
+      const timeout = setTimeout(resolve, 8000);
       signal?.addEventListener('abort', () => {
         clearTimeout(timeout);
         reject(new Error('Aborted'));

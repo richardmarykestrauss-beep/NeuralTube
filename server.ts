@@ -163,6 +163,19 @@ app.use((req, res, next) => {
   });
 
   // Gemini AI Proxy API
+
+let lastGeminiCall = 0;
+const GEMINI_DELAY_MS = 3000;
+
+const callGeminiWithRateLimit = async (genAI: any, model: string, contents: any, config: any) => {
+  const now = Date.now();
+  const timeSinceLast = now - lastGeminiCall;
+  if (timeSinceLast < GEMINI_DELAY_MS) {
+    await new Promise(resolve => setTimeout(resolve, GEMINI_DELAY_MS - timeSinceLast));
+  }
+  lastGeminiCall = Date.now();
+  return genAI.models.generateContent({ model, contents, config });
+};
   app.post("/api/ai/generate", async (req, res) => {
     const { model, contents, config } = req.body;
     const apiKey = process.env.GEMINI_API_KEY;
@@ -173,11 +186,7 @@ app.use((req, res, next) => {
 
     try {
       const genAI = new GoogleGenAI({ apiKey });
-      const response = await genAI.models.generateContent({
-        model: model || "gemini-2.0-flash",
-        contents,
-        config
-      });
+      const response = await callGeminiWithRateLimit(genAI, model || "gemini-2.0-flash", contents, config);
 
       res.json({ text: response.text });
     } catch (error) {
