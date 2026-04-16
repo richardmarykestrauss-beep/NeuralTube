@@ -220,7 +220,7 @@ export const simulateVideoUpload = async (videoId: string, title: string) => {
     const videoDoc = await getDoc(doc(db, "videos", videoId));
     const videoData = videoDoc.data();
 
-    const response = await fetch("/api/youtube/upload", {
+    const response = await fetch("https://neuraltube.onrender.com/api/youtube/upload", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
