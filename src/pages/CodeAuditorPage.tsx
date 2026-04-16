@@ -17,7 +17,7 @@ export default function CodeAuditorPage() {
     setResult(null);
     try {
       // 1. Fetch codebase files from our API
-      const response = await fetch("/api/codebase/files");
+      const response = await fetch("https://neuraltube.onrender.com/api/codebase/files");
       if (!response.ok) throw new Error("Failed to fetch codebase files");
       const files = await response.json();
 
