@@ -174,7 +174,7 @@ app.use((req, res, next) => {
     try {
       const genAI = new GoogleGenAI({ apiKey });
       const response = await genAI.models.generateContent({
-        model: model || "gemini-1.5-flash",
+        model: model || "gemini-2.0-flash",
         contents,
         config
       });
