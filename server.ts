@@ -10,7 +10,7 @@ import { GoogleGenAI, Type } from "@google/genai";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-
+import('fs').then(({ writeFileSync }) => writeFileSync('/tmp/gcp-credentials.json', JSON.stringify(credentials)));
 if (process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
   const credentials = JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON);
   process.env.GOOGLE_APPLICATION_CREDENTIALS = '/tmp/gcp-credentials.json';
