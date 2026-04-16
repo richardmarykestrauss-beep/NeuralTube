@@ -167,11 +167,9 @@ app.use((req, res, next) => {
     }
   });
 
-  // Gemini AI Proxy API
-
+ // Gemini AI Proxy API
 let lastGeminiCall = 0;
 const GEMINI_DELAY_MS = 3000;
-
 const callGeminiWithRateLimit = async (genAI: any, model: string, contents: any, config: any) => {
   const now = Date.now();
   const timeSinceLast = now - lastGeminiCall;
@@ -180,6 +178,7 @@ const callGeminiWithRateLimit = async (genAI: any, model: string, contents: any,
   }
   lastGeminiCall = Date.now();
   return genAI.models.generateContent({ model, contents, config });
+};
 };
 app.post("/api/ai/generate", async (req, res) => {
   const { model, contents } = req.body;
