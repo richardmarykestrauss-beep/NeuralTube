@@ -72,7 +72,7 @@ app.use((req, res, next) => {
                 window.opener.postMessage({ 
                   type: 'YOUTUBE_AUTH_SUCCESS', 
                   tokens: ${JSON.stringify(tokens)} 
-                }, process.env.APP_URL || 'http://localhost:3000');
+                }, 'https://neural-tube.vercel.app');
                 window.close();
               } else {
                 window.location.href = '/';
