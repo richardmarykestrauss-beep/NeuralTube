@@ -11,6 +11,11 @@ import { GoogleGenAI, Type } from "@google/genai";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+if (process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
+  const credentials = JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON);
+  process.env.GOOGLE_APPLICATION_CREDENTIALS = '/tmp/gcp-credentials.json';
+  require('fs').writeFileSync('/tmp/gcp-credentials.json', JSON.stringify(credentials));
+}
 async function startServer() {
   const app = express();
 app.use((req, res, next) => {
@@ -176,24 +181,22 @@ const callGeminiWithRateLimit = async (genAI: any, model: string, contents: any,
   lastGeminiCall = Date.now();
   return genAI.models.generateContent({ model, contents, config });
 };
-  app.post("/api/ai/generate", async (req, res) => {
-    const { model, contents, config } = req.body;
-    const apiKey = process.env.GEMINI_API_KEY;
-
-    if (!apiKey) {
-      return res.status(500).json({ error: "GEMINI_API_KEY is not defined on server." });
-    }
-
-    try {
-      const genAI = new GoogleGenAI({ apiKey });
-      const response = await callGeminiWithRateLimit(genAI, model || "gemini-2.0-flash", contents, config);
-
-      res.json({ text: response.text });
-    } catch (error) {
-      console.error("Gemini API Error:", error);
-      res.status(500).json({ error: "AI Generation failed", details: error instanceof Error ? error.message : "Unknown error" });
-    }
-  });
+app.post("/api/ai/generate", async (req, res) => {
+  const { model, contents } = req.body;
+  try {
+    const { VertexAI } = await import("@google-cloud/vertexai");
+    const vertexAI = new VertexAI({ project: "neuraltube-app", location: "us-central1" });
+    const gm = vertexAI.getGenerativeModel({ model: model || "gemini-2.0-flash-001" });
+    const prompt = contents.map((c: any) => c.parts.map((p: any) => p.text).join(" ")).join(" ");
+    const result = await gm.generateContent(prompt);
+    const text = result.response.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    res.json({ text });
+  } catch (error) {
+    console.error("Vertex AI Error:", error);
+    res.status(500).json({ error: "AI Generation failed", details: error instanceof Error ? error.message : "Unknown error" });
+  }
+});
+     
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
