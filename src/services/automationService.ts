@@ -22,10 +22,14 @@ export const runAutonomousScan = async (niche: string, authorUid: string) => {
       
       if (existing.empty) {
         await addDoc(collection(db, "trends"), {
-          ...trend,
+          topic: trend.topic,
+          score: trend.score || 50,
+          volume: trend.volume || "Medium",
+          competition: trend.competition || "Medium",
+          potential: trend.potential || "Medium",
+          status: trend.status || "rising",
           niche,
           velocity: `+${Math.floor(Math.random() * 500)}%`,
-          revenue: `$${(Math.random() * 5).toFixed(1)}K/day`,
           updatedAt: serverTimestamp()
         });
 
@@ -50,7 +54,6 @@ export const runAutonomousScan = async (niche: string, authorUid: string) => {
             eta: "2h",
             authorUid,
             niche,
-            revenue: trend.revenue,
             createdAt: serverTimestamp()
           });
 
