@@ -103,10 +103,11 @@ export const subscribeToVideos = (callback: (videos: Video[]) => void) => {
 
 export const addVideo = async (video: Omit<Video, 'id' | 'createdAt'>) => {
   try {
-    await addDoc(collection(db, 'videos'), {
-      ...video,
-      createdAt: serverTimestamp()
-    });
+    const cleanVideo = Object.fromEntries(
+      Object.entries({ ...video, createdAt: serverTimestamp() })
+        .filter(([_, v]) => v !== undefined)
+    );
+    await addDoc(collection(db, 'videos'), cleanVideo);
   } catch (error) {
     handleFirestoreError(error, OperationType.CREATE, 'videos');
   }
