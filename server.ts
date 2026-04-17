@@ -1,6 +1,5 @@
 import cron from 'node-cron';
 import express from "express";
-import { createServer as createViteServer } from "vite";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
@@ -448,6 +447,8 @@ async function startServer() {
 
   // ─── Static / Vite ────────────────────────────────────────────────────────
   if (process.env.NODE_ENV !== "production") {
+    // Dynamically import vite only in dev mode (not installed in production image)
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
