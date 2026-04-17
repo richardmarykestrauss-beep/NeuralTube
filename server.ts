@@ -10,12 +10,7 @@ import { GoogleGenAI, Type } from "@google/genai";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-import('fs').then(({ writeFileSync }) => writeFileSync('/tmp/gcp-credentials.json', JSON.stringify(credentials)));
-if (process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
-  const credentials = JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON);
-  process.env.GOOGLE_APPLICATION_CREDENTIALS = '/tmp/gcp-credentials.json';
-  require('fs').writeFileSync('/tmp/gcp-credentials.json', JSON.stringify(credentials));
-}
+
 async function startServer() {
   const app = express();
 app.use((req, res, next) => {
@@ -184,7 +179,9 @@ app.post("/api/ai/generate", async (req, res) => {
   const { model, contents } = req.body;
   try {
     const { VertexAI } = await import("@google-cloud/vertexai");
-    const vertexAI = new VertexAI({ project: "neuraltube-app", location: "us-central1" });
+    const credsJson = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
+    const googleAuthOptions = credsJson ? { credentials: JSON.parse(credsJson) } : {};
+    const vertexAI = new VertexAI({ project: "neuraltube-app", location: "us-central1", googleAuthOptions });
     const gm = vertexAI.getGenerativeModel({ model: model || "gemini-2.0-flash-001" });
     const prompt = contents.map((c: any) => c.parts.map((p: any) => p.text).join(" ")).join(" ");
     const result = await gm.generateContent(prompt);
