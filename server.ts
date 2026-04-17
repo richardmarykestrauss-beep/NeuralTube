@@ -410,10 +410,16 @@ async function startServer() {
   // ─── YouTube Upload ────────────────────────────────────────────────────────
   app.post("/api/youtube/upload", async (req, res) => {
     const { tokens, title, description, niche, videoId: vidId, videoUrl, thumbnailUrl } = req.body;
-    if (!tokens) return res.status(401).json({ error: "YouTube not connected" });
+
+    // Use stored refresh token from env if no tokens provided in request
+    const effectiveTokens = tokens || (process.env.YOUTUBE_REFRESH_TOKEN ? {
+      refresh_token: process.env.YOUTUBE_REFRESH_TOKEN
+    } : null);
+
+    if (!effectiveTokens) return res.status(401).json({ error: "YouTube not connected — no tokens provided and YOUTUBE_REFRESH_TOKEN not set" });
 
     try {
-      oauth2Client.setCredentials(tokens);
+      oauth2Client.setCredentials(effectiveTokens);
       const youtube = google.youtube({ version: "v3", auth: oauth2Client });
 
       let videoStream: any;
@@ -477,6 +483,20 @@ async function startServer() {
       console.error("YouTube Upload Error:", error);
       res.status(500).json({ error: "Failed to upload to YouTube", details: error instanceof Error ? error.message : "Unknown" });
     }
+  });
+
+  // ─── YouTube Auth Status ──────────────────────────────────────────────────
+  app.get("/api/auth/youtube/status", (req, res) => {
+    const hasRefreshToken = !!process.env.YOUTUBE_REFRESH_TOKEN;
+    const hasClientId = !!process.env.YOUTUBE_CLIENT_ID;
+    const hasClientSecret = !!process.env.YOUTUBE_CLIENT_SECRET;
+    res.json({
+      authenticated: hasRefreshToken && hasClientId && hasClientSecret,
+      clientId: hasClientId ? 'set' : 'missing',
+      clientSecret: hasClientSecret ? 'set' : 'missing',
+      refreshToken: hasRefreshToken ? 'set' : 'missing',
+      ready: hasRefreshToken && hasClientId && hasClientSecret
+    });
   });
 
   // ─── Codebase Audit ────────────────────────────────────────────────────────
