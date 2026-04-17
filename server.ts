@@ -13,11 +13,22 @@ const execAsync = promisify(exec);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// ─── Helper: Get Google credentials from env ────────────────────────────────
-function getGoogleCredentials() {
+// ─── Helper: Get Google credentials ─────────────────────────────────────────
+// On Cloud Run, Application Default Credentials (ADC) are provided automatically
+// via the metadata server using the attached service account.
+// In local dev, set GOOGLE_APPLICATION_CREDENTIALS_JSON or use gcloud auth.
+function getGoogleCredentials(): any | undefined {
   const credsJson = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
-  if (!credsJson) throw new Error("GOOGLE_APPLICATION_CREDENTIALS_JSON not set");
-  return JSON.parse(credsJson);
+  if (credsJson && credsJson.trim().startsWith('{')) {
+    try {
+      return JSON.parse(credsJson);
+    } catch (e) {
+      console.warn('GOOGLE_APPLICATION_CREDENTIALS_JSON is set but invalid JSON - falling back to ADC');
+    }
+  }
+  // Return undefined to use Application Default Credentials (ADC)
+  // Cloud Run automatically provides ADC via the attached service account
+  return undefined;
 }
 
 // ─── Rate limiting for AI calls ──────────────────────────────────────────────
@@ -142,7 +153,7 @@ async function startServer() {
       const vertexAI = new VertexAI({
         project: "neuraltube-app",
         location: "us-central1",
-        googleAuthOptions: { credentials }
+        ...(credentials ? { googleAuthOptions: { credentials } } : {})
       });
       const gm = vertexAI.getGenerativeModel({ model: model || "gemini-2.0-flash-001" });
       
@@ -219,7 +230,7 @@ async function startServer() {
     try {
       const { TextToSpeechClient } = await import("@google-cloud/text-to-speech");
       const credentials = getGoogleCredentials();
-      const ttsClient = new TextToSpeechClient({ credentials });
+      const ttsClient = new TextToSpeechClient(credentials ? { credentials } : {});
 
       const [response] = await ttsClient.synthesizeSpeech({
         input: { text },
@@ -288,7 +299,7 @@ async function startServer() {
       // Upload to GCS
       const { Storage } = await import("@google-cloud/storage");
       const credentials = getGoogleCredentials();
-      const storage = new Storage({ credentials });
+      const storage = new Storage(credentials ? { credentials } : {});
       const bucket = storage.bucket("neuraltube-videos");
       const fileName = `thumbnails/${fileId}_thumbnail.jpg`;
       const file = bucket.file(fileName);
@@ -360,7 +371,7 @@ async function startServer() {
       // Upload final video to GCS
       const { Storage } = await import("@google-cloud/storage");
       const credentials = getGoogleCredentials();
-      const storage = new Storage({ credentials });
+      const storage = new Storage(credentials ? { credentials } : {});
       const bucket = storage.bucket("neuraltube-videos");
       const fileName = `videos/${videoId}_final.mp4`;
       const file = bucket.file(fileName);
