@@ -115,26 +115,44 @@ async function startServer() {
   app.get("/api/auth/youtube/callback", async (req, res) => {
     const { code } = req.query;
     try {
-      const { tokens } = await oauth2Client.getToken(code as string);
+      // Create a fresh OAuth2 client using current env vars to avoid stale initialization
+      const callbackClient = new google.auth.OAuth2(
+        process.env.YOUTUBE_CLIENT_ID,
+        process.env.YOUTUBE_CLIENT_SECRET,
+        `${process.env.APP_URL || 'http://localhost:3000'}/api/auth/youtube/callback`
+      );
+      console.log('OAuth callback - CLIENT_ID present:', !!process.env.YOUTUBE_CLIENT_ID);
+      console.log('OAuth callback - CLIENT_SECRET present:', !!process.env.YOUTUBE_CLIENT_SECRET);
+      console.log('OAuth callback - APP_URL:', process.env.APP_URL);
+      const { tokens } = await callbackClient.getToken(code as string);
+      console.log('YouTube OAuth tokens received:', JSON.stringify({ 
+        access_token: tokens.access_token ? 'present' : 'missing',
+        refresh_token: tokens.refresh_token || 'NOT_RECEIVED',
+        expiry_date: tokens.expiry_date
+      }));
+      // Store refresh token to file for retrieval
+      if (tokens.refresh_token) {
+        fs.writeFileSync('/tmp/youtube_refresh_token.txt', tokens.refresh_token);
+        console.log('YOUTUBE_REFRESH_TOKEN:', tokens.refresh_token);
+      }
+      // Set on the main oauth2Client too
+      oauth2Client.setCredentials(tokens);
       res.send(`
-        <html><body>
+        <html><body style="font-family:sans-serif;padding:40px;background:#111;color:#fff">
+          <h2 style="color:#00ff88">✅ YouTube Authorization Successful!</h2>
+          <p>Refresh Token: <code style="background:#222;padding:8px;border-radius:4px;word-break:break-all">${tokens.refresh_token || 'Not returned (already authorized)'}</code></p>
+          <p style="color:#888">You can close this tab and return to the app.</p>
           <script>
             if (window.opener) {
-              window.opener.postMessage({ 
-                type: 'YOUTUBE_AUTH_SUCCESS', 
-                tokens: ${JSON.stringify(tokens)} 
-              }, '${process.env.APP_URL || 'http://localhost:3000'}');
-              window.close();
-            } else {
-              window.location.href = '/';
+              window.opener.postMessage({ type: 'YOUTUBE_AUTH_SUCCESS', tokens: ${JSON.stringify(tokens)} }, '*');
+              setTimeout(() => window.close(), 3000);
             }
           </script>
-          <p>Authentication successful. This window should close automatically.</p>
         </body></html>
       `);
     } catch (error) {
       console.error("Error exchanging code for tokens:", error);
-      res.status(500).send("Authentication failed");
+      res.status(500).send(`<html><body style="font-family:sans-serif;padding:40px;background:#111;color:#fff"><h2 style="color:#ff4444">❌ Authentication Failed</h2><pre style="color:#ff8888">${error}</pre></body></html>`);
     }
   });
 
