@@ -33,8 +33,10 @@ export interface TrendScanResult {
   status: "hot" | "rising" | "stable";
 }
 
+import { API_BASE_URL } from "../config/api";
+
 const callAiProxy = async (model: string, contents: { role: string; parts: { text: string }[] }[], config?: Record<string, unknown>) => {
-  const response = await fetch("https://neuraltube.onrender.com/api/ai/generate", {
+  const response = await fetch(`${API_BASE_URL}/api/ai/generate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ model, contents, config })

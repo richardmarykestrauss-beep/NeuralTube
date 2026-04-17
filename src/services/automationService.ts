@@ -2,6 +2,7 @@ import { scanForTrends, generateVideoScript, generateVisualsPrompt, generateSEOD
 import { db, auth } from "@/firebase";
 import { collection, addDoc, serverTimestamp, query, where, getDocs, updateDoc, doc, getDoc } from "firebase/firestore";
 import { toast } from "sonner";
+import { API_BASE_URL } from "../config/api";
 
 export const runAutonomousScan = async (niche: string, authorUid: string) => {
   try {
@@ -126,14 +127,40 @@ const processVideoPipeline = async (videoId: string, title: string, niche: strin
           seo,
           progress: 100
         });
-      } else if (stage === 'thumbnail') {
-        // Simulate thumbnail generation
-        await updateDoc(doc(db, "videos", videoId), {
-          thumbnailUrl: `https://picsum.photos/seed/${encodeURIComponent(title)}/1280/720`,
-          progress: 100
+      } else if (stage === 'voiceover') {
+        // Call real TTS API on Cloud Run backend
+        const ttsResponse = await fetch(`${API_BASE_URL}/api/tts`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: currentScript || title, voice: "en-US-Neural2-D" })
         });
+        if (ttsResponse.ok) {
+          const ttsData = await ttsResponse.json();
+          await updateDoc(doc(db, "videos", videoId), {
+            voiceoverUrl: ttsData.url,
+            progress: 100
+          });
+        } else {
+          throw new Error("TTS API call failed");
+        }
+      } else if (stage === 'thumbnail') {
+        // Call real thumbnail generation API on Cloud Run backend
+        const thumbResponse = await fetch(`${API_BASE_URL}/api/thumbnail`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title, niche })
+        });
+        if (thumbResponse.ok) {
+          const thumbData = await thumbResponse.json();
+          await updateDoc(doc(db, "videos", videoId), {
+            thumbnailUrl: thumbData.url,
+            progress: 100
+          });
+        } else {
+          throw new Error("Thumbnail API call failed");
+        }
       } else {
-        // Other stages just simulate progress for now
+        // Other stages (research, ideation, review) just mark as complete
         await updateDoc(doc(db, "videos", videoId), {
           progress: 100
         });
@@ -223,7 +250,7 @@ export const simulateVideoUpload = async (videoId: string, title: string) => {
     const videoDoc = await getDoc(doc(db, "videos", videoId));
     const videoData = videoDoc.data();
 
-    const response = await fetch("https://neuraltube.onrender.com/api/youtube/upload", {
+    const response = await fetch(`${API_BASE_URL}/api/youtube/upload`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

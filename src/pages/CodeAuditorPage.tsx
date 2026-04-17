@@ -1,3 +1,4 @@
+import { API_BASE_URL } from "../config/api";
 import React, { useState } from "react";
 import { Shield, Zap, Code, AlertTriangle, CheckCircle2, Loader2, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -17,7 +18,7 @@ export default function CodeAuditorPage() {
     setResult(null);
     try {
       // 1. Fetch codebase files from our API
-      const response = await fetch("https://neuraltube.onrender.com/api/codebase/files");
+      const response = await fetch(`${API_BASE_URL}/api/codebase/files`);
       if (!response.ok) throw new Error("Failed to fetch codebase files");
       const files = await response.json();
 

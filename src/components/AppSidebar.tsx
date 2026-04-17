@@ -1,3 +1,4 @@
+import { API_BASE_URL } from "../config/api";
 import { useState, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { 
@@ -54,7 +55,7 @@ export const AppSidebar = () => {
     setConnecting(true);
     
     try {
-      const response = await fetch("https://neuraltube.onrender.com/api/auth/youtube/url");
+      const response = await fetch(`${API_BASE_URL}/api/auth/youtube/url`);
       const data = await response.json();
       
       if (!response.ok) {
