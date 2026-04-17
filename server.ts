@@ -44,6 +44,14 @@ async function scanForTrends(niche: string) {
 
 async function startServer() {
   const app = express();
+  const PORT = parseInt(process.env.PORT || "3000");
+
+  // ─── Bind to port IMMEDIATELY so Cloud Run health check passes ───────────
+  // Cloud Run requires the container to listen on PORT within the startup timeout.
+  // We start listening first, then complete async initialization.
+  const server = app.listen(PORT, "0.0.0.0", () => {
+    console.log(`NeuralTube server listening on http://0.0.0.0:${PORT}`);
+  });
 
   // ─── CORS ──────────────────────────────────────────────────────────────────
   app.use((req, res, next) => {
@@ -64,7 +72,6 @@ async function startServer() {
     next();
   });
 
-  const PORT = parseInt(process.env.PORT || "3000");
   app.use(express.json({ limit: '50mb' }));
   app.use(cookieParser());
 
@@ -467,9 +474,7 @@ async function startServer() {
     }
   });
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`NeuralTube server running on http://0.0.0.0:${PORT}`);
-  });
+  console.log(`NeuralTube server fully initialized on http://0.0.0.0:${PORT}`);
 }
 
 // ─── Utility ──────────────────────────────────────────────────────────────────
