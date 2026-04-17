@@ -134,7 +134,7 @@ async function startServer() {
 
   // ─── Vertex AI / Gemini Proxy ──────────────────────────────────────────────
   app.post("/api/ai/generate", async (req, res) => {
-    const { model, contents } = req.body;
+    const { model, contents, prompt: directPrompt, type } = req.body;
     try {
       await waitForRateLimit();
       const { VertexAI } = await import("@google-cloud/vertexai");
@@ -145,10 +145,24 @@ async function startServer() {
         googleAuthOptions: { credentials }
       });
       const gm = vertexAI.getGenerativeModel({ model: model || "gemini-2.0-flash-001" });
-      const prompt = contents.map((c: any) => c.parts.map((p: any) => p.text).join(" ")).join(" ");
+      
+      // Support both Gemini-style contents array and simple prompt string
+      let prompt: string;
+      if (directPrompt) {
+        prompt = directPrompt;
+      } else if (contents && Array.isArray(contents)) {
+        prompt = contents.map((c: any) => {
+          if (typeof c === 'string') return c;
+          if (c.parts) return c.parts.map((p: any) => p.text || '').join(' ');
+          return '';
+        }).join(' ');
+      } else {
+        return res.status(400).json({ error: 'prompt or contents is required' });
+      }
+
       const result = await gm.generateContent(prompt);
       const text = result.response.candidates?.[0]?.content?.parts?.[0]?.text || "";
-      res.json({ text });
+      res.json({ text, type });
     } catch (error) {
       console.error("Vertex AI Error:", error);
       res.status(500).json({ 
@@ -199,6 +213,8 @@ async function startServer() {
   app.post("/api/tts", async (req, res) => {
     const { text, videoId, voice = "en-US-Neural2-D", speakingRate = 1.0 } = req.body;
     if (!text) return res.status(400).json({ error: "text is required" });
+    // Generate a unique ID if videoId not provided
+    const fileId = videoId || `tts_${Date.now()}`;
 
     try {
       const { TextToSpeechClient } = await import("@google-cloud/text-to-speech");
@@ -213,17 +229,23 @@ async function startServer() {
 
       const audioContent = response.audioContent as Buffer;
 
-      // Upload to GCS
-      const { Storage } = await import("@google-cloud/storage");
-      const storage = new Storage({ credentials });
-      const bucket = storage.bucket("neuraltube-videos");
-      const fileName = `audio/${videoId}_voiceover.mp3`;
-      const file = bucket.file(fileName);
-      await file.save(audioContent, { contentType: "audio/mpeg" });
-      await file.makePublic();
-
-      const publicUrl = `https://storage.googleapis.com/neuraltube-videos/${fileName}`;
-      res.json({ success: true, audioUrl: publicUrl, fileName });
+      // Try to upload to GCS, fall back to base64 if bucket not set up yet
+      try {
+        const { Storage } = await import("@google-cloud/storage");
+        const storage = new Storage({ credentials });
+        const bucket = storage.bucket("neuraltube-videos");
+        const fileName = `audio/${fileId}_voiceover.mp3`;
+        const file = bucket.file(fileName);
+        await file.save(audioContent, { contentType: "audio/mpeg" });
+        await file.makePublic();
+        const publicUrl = `https://storage.googleapis.com/neuraltube-videos/${fileName}`;
+        res.json({ success: true, audioUrl: publicUrl, fileName });
+      } catch (storageErr) {
+        // GCS not available — return base64 audio directly
+        console.warn("GCS upload failed, returning base64 audio:", storageErr);
+        const base64Audio = (audioContent as Buffer).toString("base64");
+        res.json({ success: true, audioBase64: base64Audio, format: "mp3", fallback: true });
+      }
     } catch (error) {
       console.error("TTS Error:", error);
       res.status(500).json({ error: "TTS generation failed", details: error instanceof Error ? error.message : "Unknown" });
@@ -232,8 +254,10 @@ async function startServer() {
 
   // ─── Thumbnail Generation ──────────────────────────────────────────────────
   app.post("/api/thumbnail", async (req, res) => {
-    const { title, niche, videoId } = req.body;
-    if (!title || !videoId) return res.status(400).json({ error: "title and videoId are required" });
+    const { title, niche, videoId, style } = req.body;
+    if (!title) return res.status(400).json({ error: "title is required" });
+    // Generate a unique ID if videoId not provided
+    const fileId = videoId || `thumb_${Date.now()}`;
 
     try {
       // Fetch background image from Unsplash
@@ -247,8 +271,8 @@ async function startServer() {
       // Download the background image
       const tmpDir = "/tmp/neuraltube";
       if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
-      const bgPath = `${tmpDir}/${videoId}_bg.jpg`;
-      const thumbPath = `${tmpDir}/${videoId}_thumb.jpg`;
+      const bgPath = `${tmpDir}/${fileId}_bg.jpg`;
+      const thumbPath = `${tmpDir}/${fileId}_thumb.jpg`;
 
       const imgResponse = await axios.get(imageUrl, { responseType: "arraybuffer" });
       fs.writeFileSync(bgPath, imgResponse.data);
@@ -266,7 +290,7 @@ async function startServer() {
       const credentials = getGoogleCredentials();
       const storage = new Storage({ credentials });
       const bucket = storage.bucket("neuraltube-videos");
-      const fileName = `thumbnails/${videoId}_thumbnail.jpg`;
+      const fileName = `thumbnails/${fileId}_thumbnail.jpg`;
       const file = bucket.file(fileName);
       await file.save(fs.readFileSync(thumbPath), { contentType: "image/jpeg" });
       await file.makePublic();
