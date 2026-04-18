@@ -216,9 +216,9 @@ async function startServer() {
     const { topic, niche, videoType = "long-form" } = req.body;
     if (!topic) return res.status(400).json({ error: "topic is required" });
     try {
-      const prompt = \`You are a YouTube retention psychology expert. Generate 5 high-converting hooks for a \${videoType} YouTube video about: "\${topic}" in the \${niche || 'general'} niche.\\n\\nFor each hook provide: patternInterrupt (0-3 sec shocking opening), openLoop (3-15 sec tease without revealing answer), credibilityAnchor (15-30 sec why trust this), title (curiosity gap formula), thumbnailConcept (what visual/emotion), psychologyTrigger (one of: curiosity_gap, fomo, social_proof, controversy, identity_trigger).\\n\\nReturn ONLY a valid JSON array with those exact field names. No markdown, no explanation.\`;
+      const prompt = `You are a YouTube retention psychology expert. Generate 5 high-converting hooks for a ${videoType} YouTube video about: "${topic}" in the ${niche || 'general'} niche.\\n\\nFor each hook provide: patternInterrupt (0-3 sec shocking opening), openLoop (3-15 sec tease without revealing answer), credibilityAnchor (15-30 sec why trust this), title (curiosity gap formula), thumbnailConcept (what visual/emotion), psychologyTrigger (one of: curiosity_gap, fomo, social_proof, controversy, identity_trigger).\\n\\nReturn ONLY a valid JSON array with those exact field names. No markdown, no explanation.`;
       let text = await callStrategyAI(prompt);
-      text = text.replace(/\\\`\\\`\\\`json\\n?/g, '').replace(/\\\`\\\`\\\`\\n?/g, '').trim();
+      text = text.replace(/\\`\\`\\`json\\n?/g, '').replace(/\\`\\`\\`\\n?/g, '').trim();
       let hooks;
       try { hooks = JSON.parse(text); } catch { hooks = [{ patternInterrupt: text.substring(0, 200), openLoop: "", credibilityAnchor: "", title: topic, thumbnailConcept: "", psychologyTrigger: "curiosity_gap" }]; }
       res.json({ hooks, topic, niche });
@@ -233,9 +233,9 @@ async function startServer() {
     const finalScript = script || content;
     if (!finalScript) return res.status(400).json({ error: "script or content is required" });
     try {
-      const prompt = \`You are a YouTube script editor protecting a creator from YouTube's 2026 AI-detection demonetization system. Rewrite this script to pass detection by: adding a unique POV/angle, injecting 2-3 specific personal anecdotes, using natural spoken language (um, actually, here's the thing), and breaking common AI sentence patterns.\\n\\nNiche: \${niche || 'general'}\\nOriginal Script:\\n\${finalScript}\\n\\nReturn ONLY a valid JSON object with fields: humanizedScript, changesMade (array of strings), aiRiskScore (0-100), uniquenessScore (0-100). No markdown.\`;
+      const prompt = `You are a YouTube script editor protecting a creator from YouTube's 2026 AI-detection demonetization system. Rewrite this script to pass detection by: adding a unique POV/angle, injecting 2-3 specific personal anecdotes, using natural spoken language (um, actually, here's the thing), and breaking common AI sentence patterns.\\n\\nNiche: ${niche || 'general'}\\nOriginal Script:\\n${finalScript}\\n\\nReturn ONLY a valid JSON object with fields: humanizedScript, changesMade (array of strings), aiRiskScore (0-100), uniquenessScore (0-100). No markdown.`;
       let text = await callStrategyAI(prompt);
-      text = text.replace(/\\\`\\\`\\\`json\\n?/g, '').replace(/\\\`\\\`\\\`\\n?/g, '').trim();
+      text = text.replace(/\\`\\`\\`json\\n?/g, '').replace(/\\`\\`\\`\\n?/g, '').trim();
       let data;
       try { data = JSON.parse(text); } catch { data = { humanizedScript: finalScript, changesMade: ["AI rewrite applied"], aiRiskScore: 35, uniquenessScore: 65 }; }
       res.json(data);
@@ -250,9 +250,9 @@ async function startServer() {
     const finalScript = script || content;
     if (!finalScript) return res.status(400).json({ error: "script or content is required" });
     try {
-      const prompt = \`You are a YouTube Shorts strategy expert. Extract 3 high-performing YouTube Shorts (30-60 seconds each) from this long-form video script. Each Short must work standalone without watching the main video.\\n\\nVideo Title: \${title || 'Untitled'}\\nNiche: \${niche || 'general'}\\n\\nFor each Short return: shortsScript (full script), openingHook (first 3 seconds to stop scroll), ctaLine (end screen directing to full video), postingStrategy (before/same-day/after main video), retentionScore (0-100), title (Short title).\\n\\nOriginal Script (first 2000 chars):\\n\${finalScript.substring(0, 2000)}\\n\\nReturn ONLY a valid JSON array with those exact fields. No markdown.\`;
+      const prompt = `You are a YouTube Shorts strategy expert. Extract 3 high-performing YouTube Shorts (30-60 seconds each) from this long-form video script. Each Short must work standalone without watching the main video.\\n\\nVideo Title: ${title || 'Untitled'}\\nNiche: ${niche || 'general'}\\n\\nFor each Short return: shortsScript (full script), openingHook (first 3 seconds to stop scroll), ctaLine (end screen directing to full video), postingStrategy (before/same-day/after main video), retentionScore (0-100), title (Short title).\\n\\nOriginal Script (first 2000 chars):\\n${finalScript.substring(0, 2000)}\\n\\nReturn ONLY a valid JSON array with those exact fields. No markdown.`;
       let text = await callStrategyAI(prompt);
-      text = text.replace(/\\\`\\\`\\\`json\\n?/g, '').replace(/\\\`\\\`\\\`\\n?/g, '').trim();
+      text = text.replace(/\\`\\`\\`json\\n?/g, '').replace(/\\`\\`\\`\\n?/g, '').trim();
       let shorts;
       try { shorts = JSON.parse(text); } catch { shorts = []; }
       res.json({ shorts, sourceTitle: title });
@@ -266,9 +266,9 @@ async function startServer() {
     const { niche, channelSize = "new", currentRevenue = 0 } = req.body;
     if (!niche) return res.status(400).json({ error: "niche is required" });
     try {
-      const prompt = \`You are a YouTube monetization strategist. Create a complete revenue stack for a \${channelSize} faceless YouTube channel in the "\${niche}" niche currently earning \$\${currentRevenue}/month.\\n\\nProvide: adSenseProjection (RPM range, views needed for \$1K/\$5K/\$10K/day), affiliateStack (array of 5 programs with name, commissionRate, avgTicket, url), digitalProducts (array of 3 ideas with name, pricePoint, format), superThanksStrategy (string), sponsorshipTargets (string), roadmap90Days (string with milestones), estimatedMonthlyAt100KViews (string), estimatedMonthlyAt1MViews (string).\\n\\nReturn ONLY valid JSON with those exact fields. No markdown.\`;
+      const prompt = `You are a YouTube monetization strategist. Create a complete revenue stack for a ${channelSize} faceless YouTube channel in the "${niche}" niche currently earning \$${currentRevenue}/month.\\n\\nProvide: adSenseProjection (RPM range, views needed for \$1K/\$5K/\$10K/day), affiliateStack (array of 5 programs with name, commissionRate, avgTicket, url), digitalProducts (array of 3 ideas with name, pricePoint, format), superThanksStrategy (string), sponsorshipTargets (string), roadmap90Days (string with milestones), estimatedMonthlyAt100KViews (string), estimatedMonthlyAt1MViews (string).\\n\\nReturn ONLY valid JSON with those exact fields. No markdown.`;
       let text = await callStrategyAI(prompt);
-      text = text.replace(/\\\`\\\`\\\`json\\n?/g, '').replace(/\\\`\\\`\\\`\\n?/g, '').trim();
+      text = text.replace(/\\`\\`\\`json\\n?/g, '').replace(/\\`\\`\\`\\n?/g, '').trim();
       let data;
       try { data = JSON.parse(text); } catch { data = { adSenseProjection: "RPM \$8-15, need 67K views/day for \$1K", affiliateStack: [], digitalProducts: [], superThanksStrategy: "Enable immediately", sponsorshipTargets: niche + " brands", roadmap90Days: "Month 1: 10 videos. Month 2: monetize. Month 3: scale.", estimatedMonthlyAt100KViews: "\$800-1500", estimatedMonthlyAt1MViews: "\$8000-15000" }; }
       res.json(data);
@@ -282,9 +282,9 @@ async function startServer() {
     const { title, niche } = req.body;
     if (!title) return res.status(400).json({ error: "title is required" });
     try {
-      const prompt = \`You are a YouTube CTR optimization expert. Analyze and improve this video title for maximum click-through rate.\\n\\nOriginal Title: "\${title}"\\nNiche: \${niche || 'general'}\\n\\nUsing psychological triggers (curiosity gap, FOMO, controversy, identity, social proof), generate:\\n- titleVariations: array of 5 objects with: title, psychTrigger, predictedCTR (e.g. "8.2%"), thumbnailConcept\\n- seoAnalysis: object with primaryKeyword, secondaryKeywords (array), searchVolume (estimate string)\\n- originalCTREstimate: string\\n\\nReturn ONLY valid JSON with those exact fields. No markdown.\`;
+      const prompt = `You are a YouTube CTR optimization expert. Analyze and improve this video title for maximum click-through rate.\\n\\nOriginal Title: "${title}"\\nNiche: ${niche || 'general'}\\n\\nUsing psychological triggers (curiosity gap, FOMO, controversy, identity, social proof), generate:\\n- titleVariations: array of 5 objects with: title, psychTrigger, predictedCTR (e.g. "8.2%"), thumbnailConcept\\n- seoAnalysis: object with primaryKeyword, secondaryKeywords (array), searchVolume (estimate string)\\n- originalCTREstimate: string\\n\\nReturn ONLY valid JSON with those exact fields. No markdown.`;
       let text = await callStrategyAI(prompt);
-      text = text.replace(/\\\`\\\`\\\`json\\n?/g, '').replace(/\\\`\\\`\\\`\\n?/g, '').trim();
+      text = text.replace(/\\`\\`\\`json\\n?/g, '').replace(/\\`\\`\\`\\n?/g, '').trim();
       let data;
       try { data = JSON.parse(text); } catch { data = { titleVariations: [{ title, psychTrigger: "curiosity_gap", predictedCTR: "5%", thumbnailConcept: "Show the result" }], seoAnalysis: { primaryKeyword: title, secondaryKeywords: [], searchVolume: "Unknown" }, originalCTREstimate: "4%" }; }
       res.json(data);
