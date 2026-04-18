@@ -5,7 +5,7 @@ import { google } from "googleapis";
 import cookieParser from "cookie-parser";
 import axios from "axios";
 import { exec } from "child_process";
-import { promisify } from "util";
+import { sify } from "util";
 
 const execAsync = promisify(exec);
 const __filename = fileURLToPath(import.meta.url);
