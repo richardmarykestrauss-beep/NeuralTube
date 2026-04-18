@@ -47,7 +47,7 @@ async function callStrategyAI(prompt: string): Promise<string> {
     location: "europe-west1",
     ...(credentials ? { googleAuthOptions: { credentials } } : {})
   });
-  const model = vertexAI.getGenerativeModel({ model: "gemini-1.5-flash-002" });
+  const model = vertexAI.getGenerativeModel({ model: "gemini-1.5-flash" });
   const result = await model.generateContent(prompt);
   return result.response.candidates?.[0]?.content?.parts?.[0]?.text || "";
 }
@@ -186,7 +186,7 @@ async function startServer() {
         location: "europe-west1",
         ...(credentials ? { googleAuthOptions: { credentials } } : {})
       });
-      const gm = vertexAI.getGenerativeModel({ model: model || "gemini-1.5-flash-002" });
+      const gm = vertexAI.getGenerativeModel({ model: model || "gemini-1.5-flash" });
       
       let prompt: string;
       if (directPrompt) {
@@ -214,9 +214,9 @@ async function startServer() {
     const { topic, niche, videoType = "long-form" } = req.body;
     if (!topic) return res.status(400).json({ error: "topic is required" });
     try {
-      const prompt = `You are a YouTube retention psychology expert. Generate 5 high-converting hooks for a ${videoType} YouTube video about: "${topic}" in the ${niche || 'general'} niche.\n\nFor each hook provide: patternInterrupt (0-3 sec shocking opening), openLoop (3-15 sec tease without revealing answer), credibilityAnchor (15-30 sec why trust this), title (curiosity gap formula), thumbnailConcept (what visual/emotion), psychologyTrigger (one of: curiosity_gap, fomo, social_proof, controversy, identity_trigger).\n\nReturn ONLY a valid JSON array with those exact field names. No markdown, no explanation.`;
+      const prompt = \`You are a YouTube retention psychology expert. Generate 5 high-converting hooks for a \${videoType} YouTube video about: "\${topic}" in the \${niche || 'general'} niche.\\n\\nFor each hook provide: patternInterrupt (0-3 sec shocking opening), openLoop (3-15 sec tease without revealing answer), credibilityAnchor (15-30 sec why trust this), title (curiosity gap formula), thumbnailConcept (what visual/emotion), psychologyTrigger (one of: curiosity_gap, fomo, social_proof, controversy, identity_trigger).\\n\\nReturn ONLY a valid JSON array with those exact field names. No markdown, no explanation.\`;
       let text = await callStrategyAI(prompt);
-      text = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+      text = text.replace(/\\\`\\\`\\\`json\\n?/g, '').replace(/\\\`\\\`\\\`\\n?/g, '').trim();
       let hooks;
       try { hooks = JSON.parse(text); } catch { hooks = [{ patternInterrupt: text.substring(0, 200), openLoop: "", credibilityAnchor: "", title: topic, thumbnailConcept: "", psychologyTrigger: "curiosity_gap" }]; }
       res.json({ hooks, topic, niche });
@@ -231,9 +231,9 @@ async function startServer() {
     const finalScript = script || content;
     if (!finalScript) return res.status(400).json({ error: "script or content is required" });
     try {
-      const prompt = `You are a YouTube script editor protecting a creator from YouTube's 2026 AI-detection demonetization system. Rewrite this script to pass detection by: adding a unique POV/angle, injecting 2-3 specific data points, varying sentence rhythm, adding 1-2 human moments (rhetorical question, personal observation), breaking repetitive patterns, making the opening hook completely unique.\n\nNiche: ${niche || 'general'}\n\nOriginal Script:\n${finalScript.substring(0, 2000)}\n\nReturn ONLY valid JSON with fields: humanizedScript, changesMade (array of strings), aiRiskScore (0-100 lower=safer), uniquenessScore (0-100). No markdown.`;
+      const prompt = \`You are a YouTube script editor protecting a creator from YouTube's 2026 AI-detection demonetization system. Rewrite this script to pass detection by: adding a unique POV/angle, injecting 2-3 specific personal anecdotes, using natural spoken language (um, actually, here's the thing), and breaking common AI sentence patterns.\\n\\nNiche: \${niche || 'general'}\\nOriginal Script:\\n\${finalScript}\\n\\nReturn ONLY a valid JSON object with fields: humanizedScript, changesMade (array of strings), aiRiskScore (0-100), uniquenessScore (0-100). No markdown.\`;
       let text = await callStrategyAI(prompt);
-      text = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+      text = text.replace(/\\\`\\\`\\\`json\\n?/g, '').replace(/\\\`\\\`\\\`\\n?/g, '').trim();
       let data;
       try { data = JSON.parse(text); } catch { data = { humanizedScript: finalScript, changesMade: ["AI rewrite applied"], aiRiskScore: 35, uniquenessScore: 65 }; }
       res.json(data);
@@ -248,9 +248,9 @@ async function startServer() {
     const finalScript = script || content;
     if (!finalScript) return res.status(400).json({ error: "script or content is required" });
     try {
-      const prompt = `You are a YouTube Shorts strategy expert. Extract 3 high-performing YouTube Shorts (30-60 seconds each) from this long-form video script. Each Short must work standalone without watching the main video.\n\nVideo Title: ${title || 'Untitled'}\nNiche: ${niche || 'general'}\n\nFor each Short return: shortsScript (full script), openingHook (first 3 seconds to stop scroll), ctaLine (end screen directing to full video), postingStrategy (before/same-day/after main video), retentionScore (0-100), title (Short title).\n\nOriginal Script (first 2000 chars):\n${finalScript.substring(0, 2000)}\n\nReturn ONLY a valid JSON array with those exact fields. No markdown.`;
+      const prompt = \`You are a YouTube Shorts strategy expert. Extract 3 high-performing YouTube Shorts (30-60 seconds each) from this long-form video script. Each Short must work standalone without watching the main video.\\n\\nVideo Title: \${title || 'Untitled'}\\nNiche: \${niche || 'general'}\\n\\nFor each Short return: shortsScript (full script), openingHook (first 3 seconds to stop scroll), ctaLine (end screen directing to full video), postingStrategy (before/same-day/after main video), retentionScore (0-100), title (Short title).\\n\\nOriginal Script (first 2000 chars):\\n\${finalScript.substring(0, 2000)}\\n\\nReturn ONLY a valid JSON array with those exact fields. No markdown.\`;
       let text = await callStrategyAI(prompt);
-      text = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+      text = text.replace(/\\\`\\\`\\\`json\\n?/g, '').replace(/\\\`\\\`\\\`\\n?/g, '').trim();
       let shorts;
       try { shorts = JSON.parse(text); } catch { shorts = []; }
       res.json({ shorts, sourceTitle: title });
@@ -264,11 +264,11 @@ async function startServer() {
     const { niche, channelSize = "new", currentRevenue = 0 } = req.body;
     if (!niche) return res.status(400).json({ error: "niche is required" });
     try {
-      const prompt = `You are a YouTube monetization strategist. Create a complete revenue stack for a ${channelSize} faceless YouTube channel in the "${niche}" niche currently earning $${currentRevenue}/month.\n\nProvide: adSenseProjection (RPM range, views needed for $1K/$5K/$10K/day), affiliateStack (array of 5 programs with name, commissionRate, avgTicket, url), digitalProducts (array of 3 ideas with name, pricePoint, format), superThanksStrategy (string), sponsorshipTargets (string), roadmap90Days (string with milestones), estimatedMonthlyAt100KViews (string), estimatedMonthlyAt1MViews (string).\n\nReturn ONLY valid JSON with those exact fields. No markdown.`;
+      const prompt = \`You are a YouTube monetization strategist. Create a complete revenue stack for a \${channelSize} faceless YouTube channel in the "\${niche}" niche currently earning \$\${currentRevenue}/month.\\n\\nProvide: adSenseProjection (RPM range, views needed for \$1K/\$5K/\$10K/day), affiliateStack (array of 5 programs with name, commissionRate, avgTicket, url), digitalProducts (array of 3 ideas with name, pricePoint, format), superThanksStrategy (string), sponsorshipTargets (string), roadmap90Days (string with milestones), estimatedMonthlyAt100KViews (string), estimatedMonthlyAt1MViews (string).\\n\\nReturn ONLY valid JSON with those exact fields. No markdown.\`;
       let text = await callStrategyAI(prompt);
-      text = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+      text = text.replace(/\\\`\\\`\\\`json\\n?/g, '').replace(/\\\`\\\`\\\`\\n?/g, '').trim();
       let data;
-      try { data = JSON.parse(text); } catch { data = { adSenseProjection: "RPM $8-15, need 67K views/day for $1K", affiliateStack: [], digitalProducts: [], superThanksStrategy: "Enable immediately", sponsorshipTargets: niche + " brands", roadmap90Days: "Month 1: 10 videos. Month 2: monetize. Month 3: scale.", estimatedMonthlyAt100KViews: "$800-1500", estimatedMonthlyAt1MViews: "$8000-15000" }; }
+      try { data = JSON.parse(text); } catch { data = { adSenseProjection: "RPM \$8-15, need 67K views/day for \$1K", affiliateStack: [], digitalProducts: [], superThanksStrategy: "Enable immediately", sponsorshipTargets: niche + " brands", roadmap90Days: "Month 1: 10 videos. Month 2: monetize. Month 3: scale.", estimatedMonthlyAt100KViews: "\$800-1500", estimatedMonthlyAt1MViews: "\$8000-15000" }; }
       res.json(data);
     } catch (error) {
       console.error("Monetization Advisor Error:", error);
@@ -280,9 +280,9 @@ async function startServer() {
     const { title, niche } = req.body;
     if (!title) return res.status(400).json({ error: "title is required" });
     try {
-      const prompt = `You are a YouTube CTR optimization expert. Analyze and improve this video title for maximum click-through rate.\n\nOriginal Title: "${title}"\nNiche: ${niche || 'general'}\n\nUsing psychological triggers (curiosity gap, FOMO, controversy, identity, social proof), generate:\n- titleVariations: array of 5 objects with: title, psychTrigger, predictedCTR (e.g. "8.2%"), thumbnailConcept\n- seoAnalysis: object with primaryKeyword, secondaryKeywords (array), searchVolume (estimate string)\n- originalCTREstimate: string\n\nReturn ONLY valid JSON with those exact fields. No markdown.`;
+      const prompt = \`You are a YouTube CTR optimization expert. Analyze and improve this video title for maximum click-through rate.\\n\\nOriginal Title: "\${title}"\\nNiche: \${niche || 'general'}\\n\\nUsing psychological triggers (curiosity gap, FOMO, controversy, identity, social proof), generate:\\n- titleVariations: array of 5 objects with: title, psychTrigger, predictedCTR (e.g. "8.2%"), thumbnailConcept\\n- seoAnalysis: object with primaryKeyword, secondaryKeywords (array), searchVolume (estimate string)\\n- originalCTREstimate: string\\n\\nReturn ONLY valid JSON with those exact fields. No markdown.\`;
       let text = await callStrategyAI(prompt);
-      text = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+      text = text.replace(/\\\`\\\`\\\`json\\n?/g, '').replace(/\\\`\\\`\\\`\\n?/g, '').trim();
       let data;
       try { data = JSON.parse(text); } catch { data = { titleVariations: [{ title, psychTrigger: "curiosity_gap", predictedCTR: "5%", thumbnailConcept: "Show the result" }], seoAnalysis: { primaryKeyword: title, secondaryKeywords: [], searchVolume: "Unknown" }, originalCTREstimate: "4%" }; }
       res.json(data);
@@ -294,16 +294,16 @@ async function startServer() {
 
   app.get("/api/strategy/niches", (req, res) => {
     const niches = [
-      { id: "betrayal-revenge", name: "Betrayal & Revenge Narratives", rpm: 12.82, cpm: 19.5, competition: "Low", channels: 200000, growth: "21x", faceless: true, saturation: 38, opportunity: 94, topGap: "Workplace betrayal stories underserved", monthlyRev: "$58K", tags: ["storytelling", "drama", "narration"] },
-      { id: "english-learning", name: "English Learning Podcasts", rpm: 11.88, cpm: 18.2, competition: "Ultra-Low", channels: 10000, growth: "21x", faceless: true, saturation: 22, opportunity: 96, topGap: "Business English for non-native speakers", monthlyRev: "$52K", tags: ["education", "language", "slides"] },
-      { id: "soundscapes", name: "Soundscapes & Healing Audio", rpm: 10.92, cpm: 16.8, competition: "Ultra-Low", channels: 20000, growth: "5.4x", faceless: true, saturation: 28, opportunity: 91, topGap: "Binaural beats for focus/sleep", monthlyRev: "$47K", tags: ["ambient", "wellness", "long-form"] },
-      { id: "personal-finance", name: "Personal Finance & Wealth", rpm: 18.50, cpm: 28.0, competition: "High", channels: 500000, growth: "10x", faceless: true, saturation: 72, opportunity: 78, topGap: "Crypto staking tutorials missing", monthlyRev: "$82K", tags: ["finance", "investing", "data"] },
-      { id: "make-money-online", name: "Make Money Online / SaaS", rpm: 17.20, cpm: 26.0, competition: "High", channels: 450000, growth: "12x", faceless: true, saturation: 68, opportunity: 75, topGap: "AI tools for passive income underserved", monthlyRev: "$76K", tags: ["business", "saas", "tutorials"] },
-      { id: "legal-court-drama", name: "Legal & Court Drama", rpm: 15.00, cpm: 23.0, competition: "Low", channels: 40000, growth: "8.1x", faceless: true, saturation: 35, opportunity: 89, topGap: "Family court cases compilation", monthlyRev: "$65K", tags: ["drama", "legal", "narration"] },
-      { id: "manhwa-webtoon", name: "Manhwa & Webtoon Recaps", rpm: 10.45, cpm: 16.0, competition: "Ultra-Low", channels: 10000, growth: "5.8x", faceless: true, saturation: 25, opportunity: 93, topGap: "Solo leveling side character analysis", monthlyRev: "$44K", tags: ["anime", "recap", "storytelling"] },
-      { id: "ai-technology", name: "AI & Technology Explainers", rpm: 14.20, cpm: 21.5, competition: "Medium", channels: 180000, growth: "15x", faceless: true, saturation: 55, opportunity: 82, topGap: "AI agent workflow tutorials", monthlyRev: "$61K", tags: ["tech", "ai", "tutorials"] },
-      { id: "veteran-kindness", name: "Veteran Kindness & Inspiration", rpm: 7.13, cpm: 11.0, competition: "Ultra-Low", channels: 30000, growth: "14x", faceless: true, saturation: 20, opportunity: 95, topGap: "Military homecoming compilations", monthlyRev: "$31K", tags: ["inspiration", "emotional", "compilation"] },
-      { id: "literary-analysis", name: "Literary Analysis & Book Reviews", rpm: 9.15, cpm: 14.0, competition: "Ultra-Low", channels: 10000, growth: "8.7x", faceless: true, saturation: 18, opportunity: 97, topGap: "Deep dives on self-help classics", monthlyRev: "$39K", tags: ["books", "education", "analysis"] },
+      { id: "betrayal-revenge", name: "Betrayal & Revenge Narratives", rpm: 12.82, cpm: 19.5, competition: "Low", channels: 200000, growth: "21x", faceless: true, saturation: 38, opportunity: 94, topGap: "Workplace betrayal stories underserved", monthlyRev: "\$58K", tags: ["storytelling", "drama", "narration"] },
+      { id: "english-learning", name: "English Learning Podcasts", rpm: 11.88, cpm: 18.2, competition: "Ultra-Low", channels: 10000, growth: "21x", faceless: true, saturation: 22, opportunity: 96, topGap: "Business English for non-native speakers", monthlyRev: "\$52K", tags: ["education", "language", "slides"] },
+      { id: "soundscapes", name: "Soundscapes & Healing Audio", rpm: 10.92, cpm: 16.8, competition: "Ultra-Low", channels: 20000, growth: "5.4x", faceless: true, saturation: 28, opportunity: 91, topGap: "Binaural beats for focus/sleep", monthlyRev: "\$47K", tags: ["ambient", "wellness", "long-form"] },
+      { id: "personal-finance", name: "Personal Finance & Wealth", rpm: 18.50, cpm: 28.0, competition: "High", channels: 500000, growth: "10x", faceless: true, saturation: 72, opportunity: 78, topGap: "Crypto staking tutorials missing", monthlyRev: "\$82K", tags: ["finance", "investing", "data"] },
+      { id: "make-money-online", name: "Make Money Online / SaaS", rpm: 17.20, cpm: 26.0, competition: "High", channels: 450000, growth: "12x", faceless: true, saturation: 68, opportunity: 75, topGap: "AI tools for passive income underserved", monthlyRev: "\$76K", tags: ["business", "saas", "tutorials"] },
+      { id: "legal-court-drama", name: "Legal & Court Drama", rpm: 15.00, cpm: 23.0, competition: "Low", channels: 40000, growth: "8.1x", faceless: true, saturation: 35, opportunity: 89, topGap: "Family court cases compilation", monthlyRev: "\$65K", tags: ["drama", "legal", "narration"] },
+      { id: "manhwa-webtoon", name: "Manhwa & Webtoon Recaps", rpm: 10.45, cpm: 16.0, competition: "Ultra-Low", channels: 10000, growth: "5.8x", faceless: true, saturation: 25, opportunity: 93, topGap: "Solo leveling side character analysis", monthlyRev: "\$44K", tags: ["anime", "recap", "storytelling"] },
+      { id: "ai-technology", name: "AI & Technology Explainers", rpm: 14.20, cpm: 21.5, competition: "Medium", channels: 180000, growth: "15x", faceless: true, saturation: 55, opportunity: 82, topGap: "AI agent workflow tutorials", monthlyRev: "\$61K", tags: ["tech", "ai", "tutorials"] },
+      { id: "veteran-kindness", name: "Veteran Kindness & Inspiration", rpm: 7.13, cpm: 11.0, competition: "Ultra-Low", channels: 30000, growth: "14x", faceless: true, saturation: 20, opportunity: 95, topGap: "Military homecoming compilations", monthlyRev: "\$31K", tags: ["inspiration", "emotional", "compilation"] },
+      { id: "literary-analysis", name: "Literary Analysis & Book Reviews", rpm: 9.15, cpm: 14.0, competition: "Ultra-Low", channels: 10000, growth: "8.7x", faceless: true, saturation: 18, opportunity: 97, topGap: "Deep dives on self-help classics", monthlyRev: "\$39K", tags: ["books", "education", "analysis"] },
     ];
     res.json({ niches });
   });
