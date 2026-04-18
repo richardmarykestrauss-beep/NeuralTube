@@ -38,20 +38,26 @@ async function waitForRateLimit() {
   lastGeminiCall = Date.now();
 }
 
-// ─── OpenAI-compatible AI helper (strategy endpoints) ────────────────────────
+// ─── Google AI Studio (Gemini) helper for strategy endpoints ─────────────────
 async function callStrategyAI(prompt: string): Promise<string> {
-  const { default: OpenAI } = await import('openai');
-  const client = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY,
-    baseURL: process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1',
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) throw new Error('GEMINI_API_KEY environment variable is not set');
+  const model = process.env.STRATEGY_AI_MODEL || 'gemini-2.5-flash';
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: { maxOutputTokens: 2000, temperature: 0.8 }
+    })
   });
-  const response = await client.chat.completions.create({
-    model: process.env.STRATEGY_AI_MODEL || 'gpt-4.1-mini',
-    messages: [{ role: 'user', content: prompt }],
-    temperature: 0.8,
-    max_tokens: 2000,
-  });
-  return response.choices[0]?.message?.content || '';
+  if (!response.ok) {
+    const err = await response.text();
+    throw new Error(`Gemini API error ${response.status}: ${err.slice(0, 200)}`);
+  }
+  const data = await response.json() as any;
+  return data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
 }
 
 // ─── Trend scanning helper (AI-powered with competition scoring) ──────────────
