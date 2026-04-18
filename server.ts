@@ -38,18 +38,20 @@ async function waitForRateLimit() {
   lastGeminiCall = Date.now();
 }
 
-// ─── Vertex AI helper (Native Gemini) ───────────────────
+// ─── OpenAI-compatible AI helper (strategy endpoints) ────────────────────────
 async function callStrategyAI(prompt: string): Promise<string> {
-  const { VertexAI } = await import("@google-cloud/vertexai");
-  const credentials = getGoogleCredentials();
-  const vertexAI = new VertexAI({
-    project: "neuraltube-app",
-    location: "europe-west1",
-    ...(credentials ? { googleAuthOptions: { credentials } } : {})
+  const { default: OpenAI } = await import('openai');
+  const client = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY,
+    baseURL: process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1',
   });
-  const model = vertexAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-  const result = await model.generateContent(prompt);
-  return result.response.candidates?.[0]?.content?.parts?.[0]?.text || "";
+  const response = await client.chat.completions.create({
+    model: process.env.STRATEGY_AI_MODEL || 'gpt-4.1-mini',
+    messages: [{ role: 'user', content: prompt }],
+    temperature: 0.8,
+    max_tokens: 2000,
+  });
+  return response.choices[0]?.message?.content || '';
 }
 
 // ─── Trend scanning helper (AI-powered with competition scoring) ──────────────
