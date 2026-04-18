@@ -31,9 +31,9 @@ function getGoogleCredentials(): any | undefined {
   return undefined;
 }
 
-// ─── Rate limiting for AI calls ──────────────────────────────────────────────
+// ─── Rate limiting for AI calls ──────────────────────────────────────────
 let lastGeminiCall = 0;
-const GEMINI_DELAY_MS = 3000;
+const GEMINI_DELAY_MS = 1000;
 async function waitForRateLimit() {
   const now = Date.now();
   const timeSinceLast = now - lastGeminiCall;
@@ -41,6 +41,22 @@ async function waitForRateLimit() {
     await new Promise(resolve => setTimeout(resolve, GEMINI_DELAY_MS - timeSinceLast));
   }
   lastGeminiCall = Date.now();
+}
+
+// ─── OpenAI-compatible AI helper (for strategy endpoints) ───────────────────
+async function callStrategyAI(prompt: string): Promise<string> {
+  const { default: OpenAI } = await import('openai');
+  const client = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY,
+    baseURL: process.env.OPENAI_BASE_URL || 'https://openrouter.ai/api/v1',
+  });
+  const response = await client.chat.completions.create({
+    model: process.env.STRATEGY_AI_MODEL || 'gpt-4.1-mini',
+    messages: [{ role: 'user', content: prompt }],
+    temperature: 0.8,
+    max_tokens: 2000,
+  });
+  return response.choices[0]?.message?.content || '';
 }
 
 // ─── Trend scanning helper (AI-powered with competition scoring) ──────────────
@@ -545,14 +561,8 @@ async function startServer() {
     const { topic, niche, videoType = "long-form" } = req.body;
     if (!topic) return res.status(400).json({ error: "topic is required" });
     try {
-      await waitForRateLimit();
-      const { VertexAI } = await import("@google-cloud/vertexai");
-      const credentials = getGoogleCredentials();
-      const vertexAI = new VertexAI({ project: "neuraltube-app", location: "us-central1", ...(credentials ? { googleAuthOptions: { credentials } } : {}) });
-      const gm = vertexAI.getGenerativeModel({ model: "gemini-2.0-flash-001" });
       const prompt = `You are a YouTube retention psychology expert. Generate 5 high-converting hooks for a ${videoType} YouTube video about: "${topic}" in the ${niche || 'general'} niche.\n\nFor each hook provide: patternInterrupt (0-3 sec shocking opening), openLoop (3-15 sec tease without revealing answer), credibilityAnchor (15-30 sec why trust this), title (curiosity gap formula), thumbnailConcept (what visual/emotion), psychologyTrigger (one of: curiosity_gap, fomo, social_proof, controversy, identity_trigger).\n\nReturn ONLY a valid JSON array with those exact field names. No markdown, no explanation.`;
-      const result = await gm.generateContent(prompt);
-      let text = result.response.candidates?.[0]?.content?.parts?.[0]?.text || "";
+      let text = await callStrategyAI(prompt);
       text = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
       let hooks;
       try { hooks = JSON.parse(text); } catch { hooks = [{ patternInterrupt: text.substring(0, 200), openLoop: "", credibilityAnchor: "", title: topic, thumbnailConcept: "", psychologyTrigger: "curiosity_gap" }]; }
@@ -568,14 +578,8 @@ async function startServer() {
     const { script, niche } = req.body;
     if (!script) return res.status(400).json({ error: "script is required" });
     try {
-      await waitForRateLimit();
-      const { VertexAI } = await import("@google-cloud/vertexai");
-      const credentials = getGoogleCredentials();
-      const vertexAI = new VertexAI({ project: "neuraltube-app", location: "us-central1", ...(credentials ? { googleAuthOptions: { credentials } } : {}) });
-      const gm = vertexAI.getGenerativeModel({ model: "gemini-2.0-flash-001" });
       const prompt = `You are a YouTube script editor protecting a creator from YouTube's 2026 AI-detection demonetization system. Rewrite this script to pass detection by: adding a unique POV/angle, injecting 2-3 specific data points, varying sentence rhythm, adding 1-2 human moments (rhetorical question, personal observation), breaking repetitive patterns, making the opening hook completely unique.\n\nNiche: ${niche || 'general'}\n\nOriginal Script:\n${script.substring(0, 2000)}\n\nReturn ONLY valid JSON with fields: humanizedScript, changesMade (array of strings), aiRiskScore (0-100 lower=safer), uniquenessScore (0-100). No markdown.`;
-      const result = await gm.generateContent(prompt);
-      let text = result.response.candidates?.[0]?.content?.parts?.[0]?.text || "";
+      let text = await callStrategyAI(prompt);
       text = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
       let data;
       try { data = JSON.parse(text); } catch { data = { humanizedScript: script, changesMade: ["AI rewrite applied"], aiRiskScore: 35, uniquenessScore: 65 }; }
@@ -591,14 +595,8 @@ async function startServer() {
     const { script, title, niche } = req.body;
     if (!script) return res.status(400).json({ error: "script is required" });
     try {
-      await waitForRateLimit();
-      const { VertexAI } = await import("@google-cloud/vertexai");
-      const credentials = getGoogleCredentials();
-      const vertexAI = new VertexAI({ project: "neuraltube-app", location: "us-central1", ...(credentials ? { googleAuthOptions: { credentials } } : {}) });
-      const gm = vertexAI.getGenerativeModel({ model: "gemini-2.0-flash-001" });
       const prompt = `You are a YouTube Shorts strategy expert. Extract 3 high-performing YouTube Shorts (30-60 seconds each) from this long-form video script. Each Short must work standalone without watching the main video.\n\nVideo Title: ${title || 'Untitled'}\nNiche: ${niche || 'general'}\n\nFor each Short return: shortsScript (full script), openingHook (first 3 seconds to stop scroll), ctaLine (end screen directing to full video), postingStrategy (before/same-day/after main video), retentionScore (0-100), title (Short title).\n\nOriginal Script (first 2000 chars):\n${script.substring(0, 2000)}\n\nReturn ONLY a valid JSON array with those exact fields. No markdown.`;
-      const result = await gm.generateContent(prompt);
-      let text = result.response.candidates?.[0]?.content?.parts?.[0]?.text || "";
+      let text = await callStrategyAI(prompt);
       text = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
       let shorts;
       try { shorts = JSON.parse(text); } catch { shorts = []; }
@@ -614,14 +612,8 @@ async function startServer() {
     const { niche, channelSize = "new", currentRevenue = 0 } = req.body;
     if (!niche) return res.status(400).json({ error: "niche is required" });
     try {
-      await waitForRateLimit();
-      const { VertexAI } = await import("@google-cloud/vertexai");
-      const credentials = getGoogleCredentials();
-      const vertexAI = new VertexAI({ project: "neuraltube-app", location: "us-central1", ...(credentials ? { googleAuthOptions: { credentials } } : {}) });
-      const gm = vertexAI.getGenerativeModel({ model: "gemini-2.0-flash-001" });
       const prompt = `You are a YouTube monetization strategist. Create a complete revenue stack for a ${channelSize} faceless YouTube channel in the "${niche}" niche currently earning $${currentRevenue}/month.\n\nProvide: adSenseProjection (RPM range, views needed for $1K/$5K/$10K/day), affiliateStack (array of 5 programs with name, commissionRate, avgTicket, url), digitalProducts (array of 3 ideas with name, pricePoint, format), superThanksStrategy (string), sponsorshipTargets (string), roadmap90Days (string with milestones), estimatedMonthlyAt100KViews (string), estimatedMonthlyAt1MViews (string).\n\nReturn ONLY valid JSON with those exact fields. No markdown.`;
-      const result = await gm.generateContent(prompt);
-      let text = result.response.candidates?.[0]?.content?.parts?.[0]?.text || "";
+      let text = await callStrategyAI(prompt);
       text = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
       let data;
       try { data = JSON.parse(text); } catch { data = { adSenseProjection: "RPM $8-15, need 67K views/day for $1K", affiliateStack: [], digitalProducts: [], superThanksStrategy: "Enable immediately", sponsorshipTargets: niche + " brands", roadmap90Days: "Month 1: 10 videos. Month 2: monetize. Month 3: scale.", estimatedMonthlyAt100KViews: "$800-1500", estimatedMonthlyAt1MViews: "$8000-15000" }; }
@@ -637,14 +629,8 @@ async function startServer() {
     const { title, niche } = req.body;
     if (!title) return res.status(400).json({ error: "title is required" });
     try {
-      await waitForRateLimit();
-      const { VertexAI } = await import("@google-cloud/vertexai");
-      const credentials = getGoogleCredentials();
-      const vertexAI = new VertexAI({ project: "neuraltube-app", location: "us-central1", ...(credentials ? { googleAuthOptions: { credentials } } : {}) });
-      const gm = vertexAI.getGenerativeModel({ model: "gemini-2.0-flash-001" });
       const prompt = `You are a YouTube CTR optimization expert. Analyze and improve this video title for maximum click-through rate.\n\nOriginal Title: "${title}"\nNiche: ${niche || 'general'}\n\nUsing psychological triggers (curiosity gap, FOMO, controversy, identity, social proof), generate:\n- titleVariations: array of 5 objects with: title, psychTrigger, predictedCTR (e.g. "8.2%"), thumbnailConcept\n- seoAnalysis: object with primaryKeyword, secondaryKeywords (array), searchVolume (estimate string)\n- originalCTREstimate: string\n\nReturn ONLY valid JSON with those exact fields. No markdown.`;
-      const result = await gm.generateContent(prompt);
-      let text = result.response.candidates?.[0]?.content?.parts?.[0]?.text || "";
+      let text = await callStrategyAI(prompt);
       text = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
       let data;
       try { data = JSON.parse(text); } catch { data = { titleVariations: [{ title, psychTrigger: "curiosity_gap", predictedCTR: "5%", thumbnailConcept: "Show the result" }], seoAnalysis: { primaryKeyword: title, secondaryKeywords: [], searchVolume: "Unknown" }, originalCTREstimate: "4%" }; }
