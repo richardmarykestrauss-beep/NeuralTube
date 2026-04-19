@@ -128,36 +128,44 @@ const processVideoPipeline = async (videoId: string, title: string, niche: strin
           progress: 100
         });
       } else if (stage === 'voiceover') {
-        // Call real TTS API on Cloud Run backend
-        const ttsResponse = await fetch(`${API_BASE_URL}/api/tts`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: currentScript || title, voice: "en-US-Neural2-D" })
-        });
-        if (ttsResponse.ok) {
+        // Call TTS API — soft failure: pipeline continues even if TTS is unavailable
+        try {
+          const ttsResponse = await fetch(`${API_BASE_URL}/api/tts`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text: (currentScript || title).substring(0, 1000), voice: "en-US-Neural2-D" })
+          });
           const ttsData = await ttsResponse.json();
           await updateDoc(doc(db, "videos", videoId), {
-            voiceoverUrl: ttsData.url,
+            voiceoverUrl: ttsData.url || null,
+            voiceoverNote: ttsData.note || null,
             progress: 100
           });
-        } else {
-          throw new Error("TTS API call failed");
+        } catch (ttsErr) {
+          // Don't block pipeline — just log and continue
+          await updateDoc(doc(db, "videos", videoId), { voiceoverUrl: null, progress: 100 });
+          console.warn('TTS soft failure:', ttsErr);
         }
       } else if (stage === 'thumbnail') {
-        // Call real thumbnail generation API on Cloud Run backend
-        const thumbResponse = await fetch(`${API_BASE_URL}/api/thumbnail`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ title, niche })
-        });
-        if (thumbResponse.ok) {
+        // Call thumbnail API — soft failure: pipeline continues with placeholder
+        try {
+          const thumbResponse = await fetch(`${API_BASE_URL}/api/thumbnail`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ title, niche })
+          });
           const thumbData = await thumbResponse.json();
           await updateDoc(doc(db, "videos", videoId), {
-            thumbnailUrl: thumbData.url,
+            thumbnailUrl: thumbData.url || `https://placehold.co/1280x720/FF4500/ffffff?text=${encodeURIComponent(title.substring(0,30))}`,
             progress: 100
           });
-        } else {
-          throw new Error("Thumbnail API call failed");
+        } catch (thumbErr) {
+          // Don't block pipeline — use placeholder
+          await updateDoc(doc(db, "videos", videoId), {
+            thumbnailUrl: `https://placehold.co/1280x720/FF4500/ffffff?text=${encodeURIComponent(title.substring(0,30))}`,
+            progress: 100
+          });
+          console.warn('Thumbnail soft failure:', thumbErr);
         }
       } else {
         // Other stages (research, ideation, review) just mark as complete

@@ -52,29 +52,38 @@ const callAiProxy = async (prompt: string): Promise<string> => {
 
 // ─── Safe JSON extractor ──────────────────────────────────────────────────────
 function extractJSON(text: string): any {
-  // Strip markdown code fences if present
-  const cleaned = text
+  // Step 1: Strip markdown code fences (handles ```json, ```JSON, ``` etc.)
+  let cleaned = text
     .replace(/```json\s*/gi, "")
     .replace(/```\s*/g, "")
     .trim();
 
-  // Try direct parse first
+  // Step 2: Try direct parse
   try {
     return JSON.parse(cleaned);
-  } catch {
-    // Try to find the first JSON object or array in the text
-    const objMatch = cleaned.match(/\{[\s\S]*\}/);
-    const arrMatch = cleaned.match(/\[[\s\S]*\]/);
-    const match = arrMatch || objMatch;
-    if (match) {
-      try {
-        return JSON.parse(match[0]);
-      } catch {
-        // Fall through to throw
-      }
-    }
-    throw new Error(`Could not parse JSON from AI response: ${text.substring(0, 100)}`);
+  } catch { /* continue */ }
+
+  // Step 3: Find the outermost JSON array first (most common in scan results)
+  const arrMatch = cleaned.match(/\[[\s\S]*\]/);
+  if (arrMatch) {
+    try { return JSON.parse(arrMatch[0]); } catch { /* continue */ }
   }
+
+  // Step 4: Find the outermost JSON object
+  const objMatch = cleaned.match(/\{[\s\S]*\}/);
+  if (objMatch) {
+    try { return JSON.parse(objMatch[0]); } catch { /* continue */ }
+  }
+
+  // Step 5: Try to fix common AI JSON issues (trailing commas, unescaped chars)
+  try {
+    const fixed = cleaned
+      .replace(/,\s*([\]\}])/g, '$1')  // remove trailing commas
+      .replace(/([\{,]\s*)(\w+)\s*:/g, '$1"$2":'); // quote unquoted keys
+    return JSON.parse(fixed);
+  } catch { /* continue */ }
+
+  throw new Error(`Could not parse JSON from AI response: ${text.substring(0, 100)}`);
 }
 
 // ─── Generate Video Script ────────────────────────────────────────────────────

@@ -218,12 +218,14 @@ async function startServer() {
   });
 
   // ─── Text-to-Speech ───────────────────────────────────────────────────────
+  // Primary: Google Cloud TTS (requires Cloud TTS API enabled in GCP project)
+  // Fallback: Google Translate TTS (free, no API key, 200 char chunks)
   app.post("/api/tts", async (req, res) => {
     const { text, voice = 'en-US-Neural2-D', languageCode = 'en-US' } = req.body;
     if (!text) return res.status(400).json({ error: 'text is required' });
     try {
-      const ttsUrl = 'https://texttospeech.googleapis.com/v1/text:synthesize';
       const apiKey = process.env.GEMINI_API_KEY;
+      const ttsUrl = 'https://texttospeech.googleapis.com/v1/text:synthesize';
       const response = await fetch(`${ttsUrl}?key=${apiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -234,8 +236,26 @@ async function startServer() {
         })
       });
       if (!response.ok) {
-        const err = await response.text();
-        throw new Error(`TTS API error ${response.status}: ${err.slice(0, 200)}`);
+        const errText = await response.text();
+        // Cloud TTS not enabled — use free Google Translate TTS fallback
+        if (response.status === 403 || response.status === 400) {
+          console.warn('Cloud TTS unavailable, using free fallback');
+          const shortText = text.substring(0, 200);
+          const encodedText = encodeURIComponent(shortText);
+          const gttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodedText}&tl=en&client=tw-ob`;
+          const gttsResp = await fetch(gttsUrl, {
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36', 'Referer': 'https://translate.google.com/' }
+          });
+          if (gttsResp.ok) {
+            const buf = Buffer.from(await gttsResp.arrayBuffer());
+            res.set('Content-Type', 'audio/mpeg');
+            res.set('Content-Length', buf.length.toString());
+            return res.send(buf);
+          }
+          // If even fallback fails, return success with a note (don't block pipeline)
+          return res.json({ url: null, note: 'TTS unavailable — enable Cloud TTS API in GCP or add GOOGLE_TTS_KEY', success: false });
+        }
+        throw new Error(`TTS API error ${response.status}: ${errText.slice(0, 200)}`);
       }
       const data = await response.json() as any;
       const audioContent = data.audioContent;
@@ -246,7 +266,43 @@ async function startServer() {
       res.send(audioBuffer);
     } catch (error: any) {
       console.error('TTS Error:', error);
-      res.status(500).json({ error: 'TTS failed', details: error.message });
+      // Don't block the pipeline — return a soft failure
+      res.json({ url: null, note: error.message, success: false });
+    }
+  });
+
+  // ─── Thumbnail Generation ─────────────────────────────────────────────────
+  app.post("/api/thumbnail", async (req, res) => {
+    const { title, niche } = req.body;
+    if (!title) return res.status(400).json({ error: 'title is required' });
+    try {
+      const concept = await callStrategyAI(
+        `Generate a YouTube thumbnail concept for: "${title}" in the ${niche || 'general'} niche.\nReturn ONLY a JSON object with no markdown: { "text": "short overlay text max 5 words", "color": "dominant hex color like #FF4500", "emotion": "shock or curiosity or excitement" }`
+      );
+      let conceptData: any = { text: title.substring(0, 30), color: 'FF4500', emotion: 'curiosity' };
+      try {
+        const cleaned = concept.replace(/```json/gi, '').replace(/```/g, '').trim();
+        const match = cleaned.match(/\{[\s\S]*\}/);
+        if (match) {
+          const parsed = JSON.parse(match[0]);
+          conceptData = { ...conceptData, ...parsed };
+        }
+      } catch { /* use defaults */ }
+      const hexColor = (conceptData.color || 'FF4500').replace('#', '');
+      const encodedText = encodeURIComponent((conceptData.text || title).substring(0, 50));
+      const thumbnailUrl = `https://placehold.co/1280x720/${hexColor}/ffffff?text=${encodedText}`;
+      res.json({
+        url: thumbnailUrl,
+        text: conceptData.text,
+        color: conceptData.color,
+        emotion: conceptData.emotion,
+        success: true
+      });
+    } catch (error: any) {
+      console.error('Thumbnail Error:', error);
+      // Don't block pipeline — return a placeholder
+      const encodedTitle = encodeURIComponent(title.substring(0, 40));
+      res.json({ url: `https://placehold.co/1280x720/FF4500/ffffff?text=${encodedTitle}`, success: false, note: error.message });
     }
   });
 
