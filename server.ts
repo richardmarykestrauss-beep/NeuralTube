@@ -127,6 +127,170 @@ async function startServer() {
     `${process.env.APP_URL || 'http://localhost:3000'}/api/auth/youtube/callback`
   );
 
+  // ─── YouTube Auth Status ────────────────────────────────────────────────────
+  app.get("/api/auth/youtube/status", (req, res) => {
+    const refreshToken = process.env.YOUTUBE_REFRESH_TOKEN;
+    const clientId = process.env.YOUTUBE_CLIENT_ID;
+    const clientSecret = process.env.YOUTUBE_CLIENT_SECRET;
+    res.json({
+      authenticated: !!(refreshToken && clientId && clientSecret),
+      clientId: clientId ? 'set' : 'missing',
+      clientSecret: clientSecret ? 'set' : 'missing',
+      refreshToken: refreshToken ? 'set' : 'missing',
+      ready: !!(refreshToken && clientId && clientSecret)
+    });
+  });
+
+  // ─── YouTube Channel Info (live from YouTube API) ─────────────────────────
+  app.get("/api/youtube/channel-info", async (req, res) => {
+    const refreshToken = process.env.YOUTUBE_REFRESH_TOKEN;
+    if (!refreshToken) {
+      return res.status(401).json({ error: 'YouTube not connected', connected: false });
+    }
+    try {
+      const channelClient = new google.auth.OAuth2(
+        process.env.YOUTUBE_CLIENT_ID,
+        process.env.YOUTUBE_CLIENT_SECRET
+      );
+      channelClient.setCredentials({ refresh_token: refreshToken });
+      const youtube = google.youtube({ version: 'v3', auth: channelClient });
+      const response = await youtube.channels.list({
+        part: ['snippet', 'statistics', 'brandingSettings'],
+        mine: true
+      });
+      const channel = response.data.items?.[0];
+      if (!channel) return res.status(404).json({ error: 'No channel found', connected: false });
+      const stats = channel.statistics || {};
+      res.json({
+        connected: true,
+        channelId: channel.id,
+        channelTitle: channel.snippet?.title,
+        channelDescription: channel.snippet?.description,
+        channelThumbnail: channel.snippet?.thumbnails?.default?.url,
+        customUrl: channel.snippet?.customUrl,
+        country: channel.snippet?.country,
+        publishedAt: channel.snippet?.publishedAt,
+        subscriberCount: parseInt(stats.subscriberCount || '0'),
+        viewCount: parseInt(stats.viewCount || '0'),
+        videoCount: parseInt(stats.videoCount || '0'),
+        hiddenSubscriberCount: stats.hiddenSubscriberCount || false
+      });
+    } catch (error: any) {
+      console.error('YouTube channel info error:', error);
+      res.status(500).json({ error: 'Failed to fetch channel info', details: error.message, connected: false });
+    }
+  });
+
+  // ─── YouTube Recent Videos ────────────────────────────────────────────────
+  app.get("/api/youtube/recent-videos", async (req, res) => {
+    const refreshToken = process.env.YOUTUBE_REFRESH_TOKEN;
+    if (!refreshToken) return res.status(401).json({ error: 'YouTube not connected' });
+    try {
+      const ytClient = new google.auth.OAuth2(process.env.YOUTUBE_CLIENT_ID, process.env.YOUTUBE_CLIENT_SECRET);
+      ytClient.setCredentials({ refresh_token: refreshToken });
+      const youtube = google.youtube({ version: 'v3', auth: ytClient });
+      const searchResp = await youtube.search.list({
+        part: ['snippet'],
+        forMine: true,
+        type: ['video'],
+        order: 'date',
+        maxResults: 10
+      });
+      const videoIds = searchResp.data.items?.map(i => i.id?.videoId).filter(Boolean) as string[];
+      if (!videoIds?.length) return res.json({ videos: [] });
+      const statsResp = await youtube.videos.list({
+        part: ['snippet', 'statistics'],
+        id: videoIds
+      });
+      const videos = statsResp.data.items?.map(v => ({
+        id: v.id,
+        title: v.snippet?.title,
+        publishedAt: v.snippet?.publishedAt,
+        thumbnail: v.snippet?.thumbnails?.medium?.url,
+        viewCount: parseInt(v.statistics?.viewCount || '0'),
+        likeCount: parseInt(v.statistics?.likeCount || '0'),
+        commentCount: parseInt(v.statistics?.commentCount || '0')
+      })) || [];
+      res.json({ videos });
+    } catch (error: any) {
+      res.status(500).json({ error: 'Failed to fetch videos', details: error.message });
+    }
+  });
+
+  // ─── Text-to-Speech ───────────────────────────────────────────────────────
+  app.post("/api/tts", async (req, res) => {
+    const { text, voice = 'en-US-Neural2-D', languageCode = 'en-US' } = req.body;
+    if (!text) return res.status(400).json({ error: 'text is required' });
+    try {
+      const ttsUrl = 'https://texttospeech.googleapis.com/v1/text:synthesize';
+      const apiKey = process.env.GEMINI_API_KEY;
+      const response = await fetch(`${ttsUrl}?key=${apiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          input: { text: text.substring(0, 5000) },
+          voice: { languageCode, name: voice },
+          audioConfig: { audioEncoding: 'MP3' }
+        })
+      });
+      if (!response.ok) {
+        const err = await response.text();
+        throw new Error(`TTS API error ${response.status}: ${err.slice(0, 200)}`);
+      }
+      const data = await response.json() as any;
+      const audioContent = data.audioContent;
+      if (!audioContent) throw new Error('No audio content returned');
+      const audioBuffer = Buffer.from(audioContent, 'base64');
+      res.set('Content-Type', 'audio/mpeg');
+      res.set('Content-Length', audioBuffer.length.toString());
+      res.send(audioBuffer);
+    } catch (error: any) {
+      console.error('TTS Error:', error);
+      res.status(500).json({ error: 'TTS failed', details: error.message });
+    }
+  });
+
+  // ─── YouTube Upload ───────────────────────────────────────────────────────
+  app.post("/api/youtube/upload", async (req, res) => {
+    const { title, description, tags, videoUrl, videoBase64, privacyStatus = 'public' } = req.body;
+    if (!title) return res.status(400).json({ error: 'title is required' });
+    const refreshToken = process.env.YOUTUBE_REFRESH_TOKEN;
+    if (!refreshToken) return res.status(401).json({ error: 'YouTube not connected. Set YOUTUBE_REFRESH_TOKEN.' });
+    try {
+      const uploadClient = new google.auth.OAuth2(process.env.YOUTUBE_CLIENT_ID, process.env.YOUTUBE_CLIENT_SECRET);
+      uploadClient.setCredentials({ refresh_token: refreshToken });
+      const youtube = google.youtube({ version: 'v3', auth: uploadClient });
+      let videoStream: any;
+      if (videoBase64) {
+        const { Readable } = await import('stream');
+        const buf = Buffer.from(videoBase64, 'base64');
+        videoStream = Readable.from(buf);
+      } else if (videoUrl) {
+        const axiosResp = await axios.get(videoUrl, { responseType: 'stream' });
+        videoStream = axiosResp.data;
+      } else {
+        return res.status(400).json({ error: 'videoUrl or videoBase64 is required' });
+      }
+      const uploadResp = await youtube.videos.insert({
+        part: ['snippet', 'status'],
+        requestBody: {
+          snippet: { title, description: description || '', tags: tags || [], categoryId: '22' },
+          status: { privacyStatus }
+        },
+        media: { mimeType: 'video/mp4', body: videoStream }
+      });
+      res.json({
+        success: true,
+        videoId: uploadResp.data.id,
+        videoUrl: `https://www.youtube.com/watch?v=${uploadResp.data.id}`,
+        title: uploadResp.data.snippet?.title
+      });
+    } catch (error: any) {
+      console.error('YouTube upload error:', error);
+      res.status(500).json({ error: 'Upload failed', details: error.message });
+    }
+  });
+
   app.get("/api/auth/youtube/url", (req, res) => {
     if (!process.env.YOUTUBE_CLIENT_ID || !process.env.YOUTUBE_CLIENT_SECRET) {
       return res.status(500).json({ error: "YouTube API credentials missing" });

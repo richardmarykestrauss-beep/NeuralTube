@@ -1,28 +1,99 @@
 import { useState, useEffect } from "react";
-import { useAuth } from "@/components/FirebaseProvider";
+import { API_BASE_URL } from "@/config/api";
 import { 
   Youtube, Users, Eye, Film, MessageSquare, TrendingUp, 
-  Sparkles, MessageCircle, ThumbsUp, BarChart3, Loader2,
-  ArrowUpRight, Target
+  Sparkles, BarChart3, Loader2, ArrowUpRight, Target, RefreshCw, ExternalLink
 } from "lucide-react";
 import { MetricCard } from "@/components/dashboard/MetricCard";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
-const YouTubeChannelPage = () => {
-  const { profile } = useAuth();
-  const [analyzing, setAnalyzing] = useState(false);
+function formatNumber(n: number): string {
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + "K";
+  return n.toString();
+}
 
-  const handleAnalyzeComments = () => {
-    setAnalyzing(true);
-    toast.info("Analyzing latest comment sections...");
-    setTimeout(() => {
-      setAnalyzing(false);
-      toast.success("Analysis complete! New suggestions generated.");
-    }, 2500);
+const YouTubeChannelPage = () => {
+  const [channelInfo, setChannelInfo] = useState<any>(null);
+  const [recentVideos, setRecentVideos] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [contentIdeas, setContentIdeas] = useState<any[]>([]);
+  const [generatingIdeas, setGeneratingIdeas] = useState(false);
+
+  const fetchChannelData = async () => {
+    setLoading(true);
+    try {
+      const [infoRes, videosRes] = await Promise.all([
+        fetch(`${API_BASE_URL}/api/youtube/channel-info`),
+        fetch(`${API_BASE_URL}/api/youtube/recent-videos`)
+      ]);
+      if (infoRes.ok) setChannelInfo(await infoRes.json());
+      if (videosRes.ok) {
+        const data = await videosRes.json();
+        setRecentVideos(data.videos || []);
+      }
+    } catch (e) {
+      toast.error("Failed to load channel data");
+    } finally {
+      setLoading(false);
+    }
   };
 
-  if (!profile?.youtubeConnected) {
+  useEffect(() => { fetchChannelData(); }, []);
+
+  const handleAnalyzeComments = async () => {
+    setAnalyzing(true);
+    toast.info("Analyzing channel with AI...");
+    try {
+      const topVideos = recentVideos.slice(0, 3).map(v => v.title).join(", ");
+      const res = await fetch(`${API_BASE_URL}/api/ai/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: `Analyze these recent YouTube video titles and provide viewer sentiment insights: ${topVideos || 'general YouTube channel'}. Return JSON with: topEmotion, keyTheme, viewerLoyalty (High/Medium/Low), sentimentScore (0-100), suggestions (array of 3 strings). Return ONLY valid JSON.`
+        })
+      });
+      if (res.ok) {
+        toast.success("AI analysis complete!");
+      }
+    } catch (e) {
+      toast.error("Analysis failed");
+    } finally {
+      setAnalyzing(false);
+    }
+  };
+
+  const handleGenerateIdeas = async () => {
+    setGeneratingIdeas(true);
+    try {
+      const channelTitle = channelInfo?.channelTitle || 'YouTube channel';
+      const res = await fetch(`${API_BASE_URL}/api/ai/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: `Generate 5 high-performing YouTube video ideas for a channel called "${channelTitle}". For each idea provide: title (curiosity-gap style), reason (why it will perform), potential (High/Very High/Medium). Return ONLY a JSON array with those exact fields.`
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        try {
+          const text = data.text || '';
+          const cleaned = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+          const ideas = JSON.parse(cleaned);
+          setContentIdeas(Array.isArray(ideas) ? ideas.slice(0, 5) : []);
+          toast.success("New content ideas generated!");
+        } catch { toast.error("Could not parse AI response"); }
+      }
+    } catch (e) {
+      toast.error("Failed to generate ideas");
+    } finally {
+      setGeneratingIdeas(false);
+    }
+  };
+
+  if (!loading && !channelInfo?.connected) {
     return (
       <div className="p-6 flex flex-col items-center justify-center min-h-[60vh] text-center space-y-4">
         <div className="p-4 bg-destructive/10 rounded-full">
@@ -31,12 +102,16 @@ const YouTubeChannelPage = () => {
         <div className="max-w-md">
           <h2 className="text-2xl font-bold">YouTube Not Connected</h2>
           <p className="text-muted-foreground mt-2">
-            Connect your YouTube channel in the sidebar or setup guide to view real-time analytics and comment intelligence.
+            The YOUTUBE_REFRESH_TOKEN is not set in Cloud Run. Go to Settings → YouTube to connect your channel.
           </p>
         </div>
       </div>
     );
   }
+
+  const subs = channelInfo?.subscriberCount ? formatNumber(channelInfo.subscriberCount) : "...";
+  const views = channelInfo?.viewCount ? formatNumber(channelInfo.viewCount) : "...";
+  const vids = channelInfo?.videoCount?.toString() || "...";
 
   return (
     <div className="p-6 space-y-6">
@@ -45,76 +120,93 @@ const YouTubeChannelPage = () => {
           <h1 className="text-2xl font-bold tracking-tight">YOUTUBE CHANNEL INTEL</h1>
           <p className="text-muted-foreground flex items-center gap-2">
             <Youtube className="h-4 w-4 text-destructive" />
-            {profile.youtubeChannelTitle} ({profile.youtubeChannelId})
+            {loading ? "Loading channel..." : channelInfo?.channelTitle || "Your Channel"}
+            {channelInfo?.customUrl && <span className="text-xs font-mono text-muted-foreground/60">{channelInfo.customUrl}</span>}
           </p>
         </div>
-        <button 
-          onClick={handleAnalyzeComments}
-          disabled={analyzing}
-          className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 transition-all"
-        >
-          {analyzing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-          ANALYZE COMMENTS & SENTIMENT
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={fetchChannelData} disabled={loading} className="flex items-center gap-1.5 px-3 py-2 bg-secondary text-xs font-mono rounded hover:bg-secondary/80 transition-colors">
+            <RefreshCw className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} /> REFRESH
+          </button>
+          <button 
+            onClick={handleAnalyzeComments}
+            disabled={analyzing}
+            className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 transition-all"
+          >
+            {analyzing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+            AI ANALYZE CHANNEL
+          </button>
+        </div>
       </div>
 
-      {/* Channel Stats */}
+      {/* Live Channel Stats */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <MetricCard title="Subscribers" value="124,842" change="+892 today" changeType="positive" icon={Users} />
-        <MetricCard title="Total Views" value="4.2M" change="+180K today" changeType="positive" icon={Eye} />
-        <MetricCard title="Total Videos" value="847" change="+3 today" changeType="positive" icon={Film} />
-        <MetricCard title="Avg. Retention" value="68.4%" change="+2.1% this week" changeType="positive" icon={TrendingUp} />
+        <MetricCard title="Subscribers" value={subs} change="Live from YouTube API" changeType="positive" icon={Users} />
+        <MetricCard title="Total Views" value={views} change="All-time channel views" changeType="positive" icon={Eye} />
+        <MetricCard title="Total Videos" value={vids} change="Published videos" changeType="positive" icon={Film} />
+        <MetricCard title="Channel Age" value={channelInfo?.publishedAt ? new Date(channelInfo.publishedAt).getFullYear().toString() : "..."} change="Year channel started" changeType="neutral" icon={TrendingUp} />
       </div>
+
+      {/* Recent Videos from YouTube */}
+      {recentVideos.length > 0 && (
+        <div className="bg-card border border-border rounded-lg overflow-hidden">
+          <div className="p-4 border-b border-border flex items-center gap-3">
+            <Film className="h-4 w-4 text-primary" />
+            <h3 className="font-semibold text-sm">RECENT VIDEOS — LIVE FROM YOUTUBE</h3>
+          </div>
+          <div className="divide-y divide-border">
+            {recentVideos.map((v) => (
+              <div key={v.id} className="p-3 flex items-center gap-3 hover:bg-secondary/20 transition-colors">
+                {v.thumbnail && <img src={v.thumbnail} alt={v.title} className="w-20 h-12 object-cover rounded flex-shrink-0" />}
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-medium truncate">{v.title}</p>
+                  <div className="flex items-center gap-3 mt-1 text-[10px] font-mono text-muted-foreground">
+                    <span>{formatNumber(v.viewCount)} views</span>
+                    <span>{v.likeCount?.toLocaleString()} likes</span>
+                    <span>{new Date(v.publishedAt).toLocaleDateString()}</span>
+                  </div>
+                </div>
+                <a href={`https://www.youtube.com/watch?v=${v.id}`} target="_blank" rel="noopener noreferrer" className="flex-shrink-0">
+                  <ExternalLink className="h-3.5 w-3.5 text-muted-foreground hover:text-primary transition-colors" />
+                </a>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Comment Analysis */}
+        {/* Channel Info Panel */}
         <div className="lg:col-span-2 space-y-6">
           <div className="bg-card border border-border rounded-lg overflow-hidden">
             <div className="p-4 border-b border-border flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <MessageSquare className="h-4 w-4 text-primary" />
-                <h3 className="font-semibold text-sm">SENTIMENT ANALYSIS</h3>
+                <h3 className="font-semibold text-sm">CHANNEL DETAILS</h3>
               </div>
-              <span className="text-[10px] font-mono text-success bg-success/10 px-2 py-0.5 rounded">92% POSITIVE</span>
+              <span className="text-[10px] font-mono text-success bg-success/10 px-2 py-0.5 rounded">CONNECTED</span>
             </div>
             <div className="p-4 space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className="p-3 bg-secondary/30 rounded-lg space-y-1">
-                  <p className="text-[10px] font-mono text-muted-foreground uppercase">Top Emotion</p>
-                  <p className="text-lg font-bold">Excitement</p>
+                  <p className="text-[10px] font-mono text-muted-foreground uppercase">Channel Name</p>
+                  <p className="text-sm font-bold">{channelInfo?.channelTitle || "—"}</p>
                 </div>
                 <div className="p-3 bg-secondary/30 rounded-lg space-y-1">
-                  <p className="text-[10px] font-mono text-muted-foreground uppercase">Key Theme</p>
-                  <p className="text-lg font-bold">AI Future</p>
+                  <p className="text-[10px] font-mono text-muted-foreground uppercase">Country</p>
+                  <p className="text-sm font-bold">{channelInfo?.country || "Not set"}</p>
                 </div>
                 <div className="p-3 bg-secondary/30 rounded-lg space-y-1">
-                  <p className="text-[10px] font-mono text-muted-foreground uppercase">Viewer Loyalty</p>
-                  <p className="text-lg font-bold text-success">High</p>
+                  <p className="text-[10px] font-mono text-muted-foreground uppercase">Subscribers Hidden</p>
+                  <p className="text-sm font-bold text-success">{channelInfo?.hiddenSubscriberCount ? "Yes" : "No"}</p>
                 </div>
               </div>
-              
-              <div className="space-y-3">
-                <h4 className="text-xs font-bold font-mono text-muted-foreground uppercase">RECENT VIEWER FEEDBACK</h4>
-                {[
-                  { user: "TechEnthusiast", comment: "The breakdown of Gemini 1.5 was incredible. Can you do one on Claude 3 next?", sentiment: "positive", suggestion: "High demand for Claude 3 content" },
-                  { user: "DevLife", comment: "I love the pacing, but maybe more code examples in the next one?", sentiment: "neutral", suggestion: "Include technical deep-dives" },
-                  { user: "FutureMind", comment: "This channel is literally my daily news source now. Keep it up!", sentiment: "positive", suggestion: "Maintain daily upload frequency" },
-                ].map((c, i) => (
-                  <div key={i} className="p-3 border border-border rounded-lg bg-secondary/10 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold">@{c.user}</span>
-                      <span className={cn("text-[9px] font-mono px-1.5 py-0.5 rounded", c.sentiment === "positive" ? "bg-success/20 text-success" : "bg-warning/20 text-warning")}>
-                        {c.sentiment.toUpperCase()}
-                      </span>
-                    </div>
-                    <p className="text-sm text-foreground/80 italic">"{c.comment}"</p>
-                    <div className="flex items-center gap-2 text-[10px] text-primary font-mono bg-primary/5 p-1.5 rounded">
-                      <Sparkles className="h-3 w-3" />
-                      AI SUGGESTION: {c.suggestion}
-                    </div>
-                  </div>
-                ))}
-              </div>
+              {channelInfo?.channelDescription && (
+                <div className="p-3 bg-secondary/10 rounded-lg">
+                  <p className="text-[10px] font-mono text-muted-foreground uppercase mb-1">Description</p>
+                  <p className="text-xs text-foreground/70 line-clamp-3">{channelInfo.channelDescription}</p>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -128,11 +220,9 @@ const YouTubeChannelPage = () => {
             </div>
             <div className="p-4 space-y-4">
               <div className="space-y-3">
-                {[
-                  { title: "Gemini vs Claude 3", reason: "High viewer request volume", potential: "High" },
-                  { title: "AI Coding Agents", reason: "Emerging trend in tech niche", potential: "Very High" },
-                  { title: "The Future of SaaS", reason: "Competitor gap identified", potential: "Medium" },
-                ].map((s, i) => (
+                {(contentIdeas.length > 0 ? contentIdeas : [
+                  { title: "Click Generate to get AI ideas", reason: "Personalized for your channel", potential: "—" },
+                ]).map((s, i) => (
                   <div key={i} className="p-3 bg-secondary/30 rounded-lg border border-border/50 hover:border-primary/30 transition-all cursor-pointer group">
                     <div className="flex items-center justify-between mb-1">
                       <span className="text-xs font-bold group-hover:text-primary transition-colors">{s.title}</span>
@@ -145,8 +235,13 @@ const YouTubeChannelPage = () => {
                   </div>
                 ))}
               </div>
-              <button className="w-full py-2 bg-secondary text-xs font-mono font-bold rounded hover:bg-secondary/80 transition-colors">
-                GENERATE MORE IDEAS
+              <button
+                onClick={handleGenerateIdeas}
+                disabled={generatingIdeas}
+                className="w-full py-2 bg-primary text-primary-foreground text-xs font-mono font-bold rounded hover:bg-primary/90 transition-colors flex items-center justify-center gap-2"
+              >
+                {generatingIdeas ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+                {generatingIdeas ? "GENERATING..." : "GENERATE AI IDEAS"}
               </button>
             </div>
           </div>

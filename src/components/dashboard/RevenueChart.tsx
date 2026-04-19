@@ -3,14 +3,15 @@ import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, TooltipPro
 import { useEffect, useState } from "react";
 import { subscribeToRevenue, RevenuePoint } from "@/services/firestoreService";
 
+// Placeholder data shown before real revenue data is logged via the pipeline
 const mockRevenueData: RevenuePoint[] = [
-  { day: "Mon", revenue: 1240, views: 45000 },
-  { day: "Tue", revenue: 1890, views: 62000 },
-  { day: "Wed", revenue: 2340, views: 78000 },
-  { day: "Thu", revenue: 1980, views: 71000 },
-  { day: "Fri", revenue: 2780, views: 95000 },
-  { day: "Sat", revenue: 3120, views: 112000 },
-  { day: "Sun", revenue: 2950, views: 104000 },
+  { day: "Mon", revenue: 0, views: 0 },
+  { day: "Tue", revenue: 0, views: 0 },
+  { day: "Wed", revenue: 0, views: 0 },
+  { day: "Thu", revenue: 0, views: 0 },
+  { day: "Fri", revenue: 0, views: 0 },
+  { day: "Sat", revenue: 0, views: 0 },
+  { day: "Sun", revenue: 0, views: 0 },
 ];
 
 const CustomTooltip = ({ active, payload, label }: TooltipProps<number, string>) => {
@@ -37,6 +38,7 @@ export const RevenueChart = () => {
   }, []);
 
   const totalRevenue = revenueData.reduce((sum, d) => sum + d.revenue, 0);
+  const hasRealData = totalRevenue > 0;
   return (
     <div className="bg-card border border-border rounded-lg overflow-hidden">
       <div className="p-4 border-b border-border flex items-center justify-between">
@@ -44,11 +46,11 @@ export const RevenueChart = () => {
           <DollarSign className="h-4 w-4 text-revenue" />
           <h3 className="font-semibold text-sm">REVENUE ENGINE</h3>
           {loading && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
+          {!loading && !hasRealData && <span className="text-[9px] font-mono text-muted-foreground bg-secondary px-1.5 py-0.5 rounded">AWAITING DATA</span>}
         </div>
         <div className="flex items-center gap-2">
-          <TrendingUp className="h-3 w-3 text-success" />
-          <span className="text-xs font-mono text-success">+23.5%</span>
-          <span className="text-sm font-mono font-bold text-revenue">${totalRevenue.toLocaleString()}/wk</span>
+          {hasRealData && <><TrendingUp className="h-3 w-3 text-success" /><span className="text-sm font-mono font-bold text-revenue">${totalRevenue.toLocaleString()}/wk</span></>}
+          {!hasRealData && <span className="text-xs font-mono text-muted-foreground">Run pipeline to populate</span>}
         </div>
       </div>
       <div className="p-4 h-48">
