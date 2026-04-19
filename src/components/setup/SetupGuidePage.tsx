@@ -1,9 +1,16 @@
-import { ExternalLink, CheckCircle2, Circle, Youtube, Key, Globe, Cpu } from "lucide-react";
+import { ExternalLink, CheckCircle2, Youtube, Key, Globe, Cpu, Zap, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/components/FirebaseProvider";
+import { useNavigate } from "react-router-dom";
+import { useState, useEffect, useRef } from "react";
+import { runAutonomousScan } from "@/services/automationService";
+import { toast } from "sonner";
 
 export const SetupGuidePage = () => {
-  const { profile } = useAuth();
+  const { profile, user } = useAuth();
+  const navigate = useNavigate();
+  const [isLaunching, setIsLaunching] = useState(false);
+  const hasAutoLaunched = useRef(false);
 
   const steps = [
     {
@@ -67,6 +74,35 @@ export const SetupGuidePage = () => {
   ];
 
   const completedCount = steps.filter(s => s.done).length;
+  const allDone = completedCount === steps.length;
+
+  // Auto-trigger first scan when all setup steps are complete
+  useEffect(() => {
+    if (allDone && !hasAutoLaunched.current && user?.uid) {
+      hasAutoLaunched.current = true;
+      toast.info("Setup complete! Auto-launching first pipeline scan...");
+      runAutonomousScan("Tech & AI", user.uid)
+        .then(() => {
+          toast.success("First scan launched! Check your pipeline.");
+          setTimeout(() => navigate("/"), 2000);
+        })
+        .catch(err => console.error("Auto-launch failed:", err));
+    }
+  }, [allDone, user?.uid]);
+
+  const handleManualLaunch = async () => {
+    if (!user?.uid) return;
+    setIsLaunching(true);
+    try {
+      await runAutonomousScan("Tech & AI", user.uid);
+      toast.success("Pipeline scan launched! Redirecting to dashboard...");
+      setTimeout(() => navigate("/"), 1500);
+    } catch (err) {
+      toast.error("Failed to launch scan");
+    } finally {
+      setIsLaunching(false);
+    }
+  };
 
   return (
     <div className="p-6 max-w-3xl mx-auto space-y-6">
@@ -119,6 +155,26 @@ export const SetupGuidePage = () => {
             </div>
           );
         })}
+      </div>
+
+      {/* Launch CTA */}
+      <div className="bg-card border border-border rounded-lg p-6 text-center space-y-3">
+        <Zap className="h-8 w-8 text-warning mx-auto" />
+        <h3 className="text-sm font-bold">Ready to Launch?</h3>
+        <p className="text-xs text-muted-foreground">
+          {allDone
+            ? "All steps complete — your pipeline is ready to run."
+            : `Complete ${steps.length - completedCount} more step${steps.length - completedCount !== 1 ? 's' : ''} to unlock full automation, or launch a manual scan now.`
+          }
+        </p>
+        <button
+          onClick={handleManualLaunch}
+          disabled={isLaunching}
+          className="flex items-center gap-2 px-6 py-3 rounded-lg bg-primary text-primary-foreground text-sm font-mono font-bold mx-auto hover:bg-primary/90 transition-colors disabled:opacity-50"
+        >
+          {isLaunching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />}
+          {isLaunching ? "LAUNCHING..." : "LAUNCH FIRST SCAN"}
+        </button>
       </div>
     </div>
   );

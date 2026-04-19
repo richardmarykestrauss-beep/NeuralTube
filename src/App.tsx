@@ -32,6 +32,7 @@ const App = () => (
               <Route index element={<DashboardPage />} />
               <Route path="pipeline" element={<PipelinePageRoute />} />
               <Route path="video-editor" element={<VideoEditorPage />} />
+              <Route path="video-editor/:videoId" element={<VideoEditorPage />} />
               <Route path="niches" element={<NichesPage />} />
               <Route path="revenue" element={<RevenuePage />} />
               <Route path="ai-engine" element={<AIEnginePage />} />

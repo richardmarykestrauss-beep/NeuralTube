@@ -3,15 +3,6 @@ import { cn } from "@/lib/utils";
 import { useEffect, useState } from "react";
 import { subscribeToVideos, Video } from "@/services/firestoreService";
 
-const mockVideos: Video[] = [
-  { title: "10 AI Tools Replacing Developers in 2026", stage: "published", views: "142K", revenue: "$847", time: "2h ago", authorUid: "system" },
-  { title: "Why Solar Panels Are FREE Now", stage: "rendering", progress: 78, eta: "12 min", authorUid: "system" },
-  { title: "The $0 to $10K/mo Crypto Strategy", stage: "voiceover", progress: 45, eta: "28 min", authorUid: "system" },
-  { title: "Doctors HATE This Natural Alternative", stage: "scripting", progress: 15, eta: "1h 5min", authorUid: "system" },
-  { title: "Smart Home Setup Under $200", stage: "queued", scheduled: "Tomorrow 8AM", authorUid: "system" },
-  { title: "Minimalist Wardrobe: 30 Items Only", stage: "research", progress: 5, eta: "2h", authorUid: "system" },
-];
-
 const stageConfig: Record<string, { icon: LucideIcon; color: string; label: string }> = {
   published: { icon: CheckCircle2, color: "text-success", label: "PUBLISHED" },
   rendering: { icon: Film, color: "text-ai-glow", label: "RENDERING" },
@@ -28,7 +19,7 @@ export const ContentPipeline = () => {
 
   useEffect(() => {
     const unsubscribe = subscribeToVideos((data) => {
-      setVideos(data.length > 0 ? data : mockVideos);
+      setVideos(data);
       setLoading(false);
     });
     return () => unsubscribe();
@@ -49,6 +40,16 @@ export const ContentPipeline = () => {
         </button>
       </div>
       <div className="divide-y divide-border">
+        {loading && (
+          <div className="p-6 text-center text-xs font-mono text-muted-foreground">Loading pipeline...</div>
+        )}
+        {!loading && videos.length === 0 && (
+          <div className="p-8 text-center">
+            <Film className="h-8 w-8 text-muted-foreground mx-auto mb-3" />
+            <p className="text-sm font-mono text-muted-foreground">No videos in pipeline yet</p>
+            <p className="text-[10px] text-muted-foreground/60 mt-1">Start the AI Engine to generate your first video</p>
+          </div>
+        )}
         {videos.map((item, i) => {
           const stage = stageConfig[item.stage] || stageConfig.error;
           const Icon = stage.icon;
