@@ -1,4 +1,4 @@
-import { Type } from "@google/genai";
+import { API_BASE_URL } from "../config/api";
 
 export interface GeneratedScript {
   hook: string;
@@ -33,132 +33,139 @@ export interface TrendScanResult {
   status: "hot" | "rising" | "stable";
 }
 
-import { API_BASE_URL } from "../config/api";
-
-const callAiProxy = async (model: string, contents: { role: string; parts: { text: string }[] }[], config?: Record<string, unknown>) => {
+// ─── Core AI proxy call ───────────────────────────────────────────────────────
+const callAiProxy = async (prompt: string): Promise<string> => {
   const response = await fetch(`${API_BASE_URL}/api/ai/generate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model, contents, config })
+    body: JSON.stringify({ prompt })
   });
-  
+
   if (!response.ok) {
-    const error = await response.json();
+    const error = await response.json().catch(() => ({ error: "Unknown error" }));
     throw new Error(error.details || error.error || "AI Proxy call failed");
   }
-  
-  return await response.json();
+
+  const data = await response.json();
+  return data.text || "";
 };
 
+// ─── Safe JSON extractor ──────────────────────────────────────────────────────
+function extractJSON(text: string): any {
+  // Strip markdown code fences if present
+  const cleaned = text
+    .replace(/```json\s*/gi, "")
+    .replace(/```\s*/g, "")
+    .trim();
+
+  // Try direct parse first
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    // Try to find the first JSON object or array in the text
+    const objMatch = cleaned.match(/\{[\s\S]*\}/);
+    const arrMatch = cleaned.match(/\[[\s\S]*\]/);
+    const match = arrMatch || objMatch;
+    if (match) {
+      try {
+        return JSON.parse(match[0]);
+      } catch {
+        // Fall through to throw
+      }
+    }
+    throw new Error(`Could not parse JSON from AI response: ${text.substring(0, 100)}`);
+  }
+}
+
+// ─── Generate Video Script ────────────────────────────────────────────────────
 export const generateVideoScript = async (topic: string, niche: string): Promise<GeneratedScript> => {
-  const result = await callAiProxy("gemini-3-flash-preview", 
-    [{ role: "user", parts: [{ text: `Generate a high-retention YouTube script for the topic: "${topic}" in the "${niche}" niche. 
-    Focus on a viral hook, data-dense body, and strong CTA. 
-    Also provide predicted performance metrics.` }] }],
-    {
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          hook: { type: Type.STRING },
-          body: { type: Type.STRING },
-          outro: { type: Type.STRING },
-          stats: {
-            type: Type.OBJECT,
-            properties: {
-              hookStrength: { type: Type.NUMBER },
-              retentionPrediction: { type: Type.NUMBER },
-              originality: { type: Type.NUMBER },
-              wordCount: { type: Type.NUMBER },
-              readingTime: { type: Type.STRING },
-              ctrPrediction: { type: Type.NUMBER },
-            },
-            required: ["hookStrength", "retentionPrediction", "originality", "wordCount", "readingTime", "ctrPrediction"],
-          },
-        },
-        required: ["hook", "body", "outro", "stats"],
-      },
-    }
-  );
+  const prompt = `You are a YouTube script writer. Generate a high-retention YouTube script for the topic: "${topic}" in the "${niche}" niche.
+Focus on a viral hook (first 30 seconds), data-dense body, and strong CTA.
 
-  return JSON.parse(result.text);
+Return ONLY a valid JSON object with this exact structure (no markdown, no explanation):
+{
+  "hook": "opening 30-second script text",
+  "body": "main script body text",
+  "outro": "closing CTA text",
+  "stats": {
+    "hookStrength": 85,
+    "retentionPrediction": 72,
+    "originality": 80,
+    "wordCount": 1200,
+    "readingTime": "8 min",
+    "ctrPrediction": 6
+  }
+}`;
+
+  const text = await callAiProxy(prompt);
+  return extractJSON(text) as GeneratedScript;
 };
 
+// ─── Analyze Niches ───────────────────────────────────────────────────────────
 export const analyzeNiches = async (): Promise<NicheAnalysis[]> => {
-  const result = await callAiProxy("gemini-3-flash-preview",
-    [{ role: "user", parts: [{ text: "Analyze the current top 4 high-RPM YouTube niches for 2026. Provide saturation levels, opportunity scores, and specific content gaps." }] }],
-    {
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.ARRAY,
-        items: {
-          type: Type.OBJECT,
-          properties: {
-            name: { type: Type.STRING },
-            channels: { type: Type.NUMBER },
-            avgRPM: { type: Type.STRING },
-            saturation: { type: Type.NUMBER },
-            opportunity: { type: Type.NUMBER },
-            topGap: { type: Type.STRING },
-            monthlyRev: { type: Type.STRING },
-          },
-          required: ["name", "channels", "avgRPM", "saturation", "opportunity", "topGap", "monthlyRev"],
-        },
-      },
-    }
-  );
+  const prompt = `Analyze the top 4 high-RPM YouTube niches for 2026. Provide saturation levels, opportunity scores, and specific content gaps.
 
-  return JSON.parse(result.text);
+Return ONLY a valid JSON array with this exact structure (no markdown, no explanation):
+[
+  {
+    "name": "Personal Finance",
+    "channels": 12000,
+    "avgRPM": "$18.50",
+    "saturation": 45,
+    "opportunity": 82,
+    "topGap": "Crypto tax strategies for beginners",
+    "monthlyRev": "$8,000-25,000"
+  }
+]`;
+
+  const text = await callAiProxy(prompt);
+  return extractJSON(text) as NicheAnalysis[];
 };
 
+// ─── Scan For Trends ──────────────────────────────────────────────────────────
 export const scanForTrends = async (niche: string): Promise<TrendScanResult[]> => {
-  const result = await callAiProxy("gemini-3-flash-preview",
-    [{ role: "user", parts: [{ text: `Scan for the top 3 trending, high-potential video topics in the "${niche}" niche right now. 
-    Focus on topics with high search volume but low competition.` }] }],
-    {
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.ARRAY,
-        items: {
-          type: Type.OBJECT,
-          properties: {
-            topic: { type: Type.STRING },
-            score: { type: Type.NUMBER },
-            volume: { type: Type.STRING },
-            competition: { type: Type.STRING },
-            potential: { type: Type.STRING },
-            status: { type: Type.STRING, enum: ["hot", "rising", "stable"] },
-          },
-          required: ["topic", "score", "volume", "competition", "potential", "status"],
-        },
-      },
-    }
-  );
+  const prompt = `You are a YouTube trend analyst. Identify the top 3 trending, high-potential video topics in the "${niche}" niche right now in 2026.
+Focus on topics with high search volume but low competition.
 
-  return JSON.parse(result.text);
+Return ONLY a valid JSON array with this exact structure (no markdown, no explanation):
+[
+  {
+    "topic": "Exact video title idea here",
+    "score": 94,
+    "volume": "2.4M",
+    "competition": "Low",
+    "potential": "Very High",
+    "status": "hot"
+  }
+]
+
+status must be one of: "hot", "rising", or "stable"`;
+
+  const text = await callAiProxy(prompt);
+  return extractJSON(text) as TrendScanResult[];
 };
 
+// ─── Generate Visuals Prompt ──────────────────────────────────────────────────
 export const generateVisualsPrompt = async (script: string): Promise<string> => {
-  const result = await callAiProxy("gemini-3-flash-preview",
-    [{ role: "user", parts: [{ text: `Based on this script, generate a detailed list of B-roll scenes and visual instructions for an AI video generator: "${script}"` }] }]
-  );
-  return result.text;
+  const prompt = `Based on this YouTube script, generate a detailed list of B-roll scenes and visual instructions for a video editor.
+Script: "${script.substring(0, 500)}"
+
+Return a plain text list of visual instructions, one per line.`;
+
+  return await callAiProxy(prompt);
 };
 
+// ─── Generate SEO Data ────────────────────────────────────────────────────────
 export const generateSEOData = async (title: string, script: string): Promise<{ tags: string[], description: string }> => {
-  const result = await callAiProxy("gemini-3-flash-preview",
-    [{ role: "user", parts: [{ text: `Generate YouTube SEO tags and a description for a video titled "${title}" with this script: "${script}". Return as JSON.` }] }],
-    {
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          tags: { type: Type.ARRAY, items: { type: Type.STRING } },
-          description: { type: Type.STRING },
-        },
-        required: ["tags", "description"],
-      },
-    }
-  );
-  return JSON.parse(result.text);
+  const prompt = `Generate YouTube SEO optimization for a video titled: "${title}"
+Script excerpt: "${script.substring(0, 300)}"
+
+Return ONLY a valid JSON object with this exact structure (no markdown, no explanation):
+{
+  "tags": ["tag1", "tag2", "tag3", "tag4", "tag5"],
+  "description": "Full YouTube video description here with keywords naturally embedded."
+}`;
+
+  const text = await callAiProxy(prompt);
+  return extractJSON(text) as { tags: string[], description: string };
 };
