@@ -8,6 +8,8 @@ import { RevenueChart } from "@/components/dashboard/RevenueChart";
 import { AIEngineStatus } from "@/components/dashboard/AIEngineStatus";
 import { ActivityFeed } from "@/components/dashboard/ActivityFeed";
 import { API_BASE_URL } from "@/config/api";
+import { subscribeToTrends } from "@/services/firestoreService";
+import { subscribeToVideos } from "@/services/firestoreService";
 
 function formatNumber(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
@@ -19,6 +21,8 @@ const DashboardPage = () => {
   const [channelStats, setChannelStats] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+  const [trendCount, setTrendCount] = useState<number | null>(null);
+  const [videoCount, setVideoCount] = useState<number | null>(null);
 
   const fetchStats = async () => {
     setLoading(true);
@@ -42,10 +46,33 @@ const DashboardPage = () => {
     return () => clearInterval(interval);
   }, []);
 
+  // Live trend count from Firestore
+  useEffect(() => {
+    const unsub = subscribeToTrends((data) => {
+      setTrendCount(data.length);
+    });
+    return () => unsub();
+  }, []);
+
+  // Live pipeline video count from Firestore
+  useEffect(() => {
+    const unsub = subscribeToVideos((data) => {
+      setVideoCount(data.length);
+    });
+    return () => unsub();
+  }, []);
+
   const connected = channelStats?.connected;
   const subscribers = loading ? "..." : connected ? formatNumber(channelStats.subscriberCount) : "—";
   const views = loading ? "..." : connected ? formatNumber(channelStats.viewCount) : "—";
   const videos = loading ? "..." : connected ? channelStats.videoCount.toString() : "—";
+
+  // Trends Found: live count from Firestore (null = still loading)
+  const trendsDisplay = trendCount === null ? "..." : trendCount === 0 ? "0" : trendCount.toString();
+  const trendsChange = trendCount === null ? "Loading..." : trendCount === 0 ? "Run a scan to populate" : `${trendCount} tracked topics`;
+
+  // Pipeline videos in Firestore
+  const pipelineDisplay = videoCount === null ? "..." : videoCount.toString();
 
   return (
     <div className="p-6 space-y-6">
@@ -63,9 +90,9 @@ const DashboardPage = () => {
         <MetricCard title="Subscribers" value={subscribers} change={connected ? "Live from YouTube" : "Connect YouTube"} changeType={connected ? "positive" : "neutral"} icon={Users} />
         <MetricCard title="Total Views" value={views} change={connected ? "All-time views" : "Connect YouTube"} changeType={connected ? "positive" : "neutral"} icon={Eye} />
         <MetricCard title="Videos Live" value={videos} change={connected ? "Published videos" : "Connect YouTube"} changeType={connected ? "positive" : "neutral"} icon={Film} />
-        <MetricCard title="Trends Found" value="23" change="6 high-value today" changeType="positive" icon={TrendingUp} />
-        <MetricCard title="Auto Rate" value="98.4%" change="Near full autonomy" changeType="positive" icon={Zap} />
-        <MetricCard title="Est. RPM" value="$12–22" change="Based on niche" changeType="positive" icon={DollarSign} />
+        <MetricCard title="Trends Found" value={trendsDisplay} change={trendsChange} changeType={trendCount && trendCount > 0 ? "positive" : "neutral"} icon={TrendingUp} />
+        <MetricCard title="Pipeline" value={pipelineDisplay} change={videoCount === 0 ? "No videos yet" : "Videos in pipeline"} changeType={videoCount && videoCount > 0 ? "positive" : "neutral"} icon={Zap} />
+        <MetricCard title="Est. RPM" value={connected ? "$12–22" : "—"} change={connected ? "Based on niche mix" : "Connect YouTube"} changeType={connected ? "positive" : "neutral"} icon={DollarSign} />
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-6">

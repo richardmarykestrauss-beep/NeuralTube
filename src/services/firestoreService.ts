@@ -29,7 +29,7 @@ export interface Trend {
 export interface Video {
   id?: string;
   title: string;
-  stage: 'research' | 'ideation' | 'scripting' | 'voiceover' | 'visuals' | 'thumbnail' | 'seo' | 'review' | 'publish' | 'error';
+  stage: 'research' | 'ideation' | 'scripting' | 'voiceover' | 'visuals' | 'thumbnail' | 'assembly' | 'seo' | 'review' | 'publish' | 'error';
   progress?: number;
   eta?: string;
   scheduled?: string;
@@ -52,6 +52,13 @@ export interface Video {
     description: string;
   };
   youtubeVideoId?: string;
+  videoBase64?: string;
+  videoAssembled?: boolean;
+  videoAssemblyError?: string;
+  videoDurationSec?: number;
+  videoFileSizeBytes?: number;
+  voiceoverBase64?: string;
+  visualKeywords?: string[];
 }
 
 export interface AILog {

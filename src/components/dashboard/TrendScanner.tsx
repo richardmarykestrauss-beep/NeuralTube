@@ -1,4 +1,4 @@
-import { TrendingUp, ExternalLink, Zap, Clock, Play, Loader2 } from "lucide-react";
+import { TrendingUp, ExternalLink, Zap, Clock, Play, Loader2, Search } from "lucide-react";
 import { StatusIndicator } from "./StatusIndicator";
 import { cn } from "@/lib/utils";
 import { useEffect, useState } from "react";
@@ -6,15 +6,7 @@ import { subscribeToTrends, Trend } from "@/services/firestoreService";
 import { runAutonomousScan } from "@/services/automationService";
 import { useAuth } from "@/components/FirebaseProvider";
 
-const mockTrends: Trend[] = [
-  { topic: "AI Agents Building Apps", score: 98, velocity: "+340%", niche: "Tech", revenue: "$4.2K/day", status: "hot" },
-  { topic: "Solar Panel DIY 2026", score: 94, velocity: "+180%", niche: "Home", revenue: "$2.8K/day", status: "hot" },
-  { topic: "Ozempic Alternatives Natural", score: 91, velocity: "+220%", niche: "Health", revenue: "$5.1K/day", status: "hot" },
-  { topic: "Passive Income Crypto Staking", score: 87, velocity: "+150%", niche: "Finance", revenue: "$3.9K/day", status: "rising" },
-  { topic: "Home Automation 2026 Guide", score: 85, velocity: "+120%", niche: "Tech", revenue: "$2.1K/day", status: "rising" },
-  { topic: "Minimalist Wardrobe Men", score: 82, velocity: "+95%", niche: "Lifestyle", revenue: "$1.8K/day", status: "rising" },
-];
-
+// No mock data — all trends must come from a real scan
 export const TrendScanner = () => {
   const [trends, setTrends] = useState<Trend[]>([]);
   const [loading, setLoading] = useState(true);
@@ -23,7 +15,8 @@ export const TrendScanner = () => {
 
   useEffect(() => {
     const unsubscribe = subscribeToTrends((data) => {
-      setTrends(data.length > 0 ? data : mockTrends);
+      // Only show real data — never fall back to mock
+      setTrends(data);
       setLoading(false);
     });
     return () => unsubscribe();
@@ -32,8 +25,17 @@ export const TrendScanner = () => {
   const handleScan = async () => {
     if (!user) return;
     setScanning(true);
-    await runAutonomousScan("Tech & AI", user.uid);
-    setScanning(false);
+    // Scan all 4 niches, not just Tech & AI
+    const niches = ["Tech & AI", "Personal Finance", "Health & Wellness", "Home Improvement"];
+    try {
+      for (const niche of niches) {
+        await runAutonomousScan(niche, user.uid);
+      }
+    } catch (err) {
+      console.error("Scan error:", err);
+    } finally {
+      setScanning(false);
+    }
   };
 
   return (
@@ -45,7 +47,7 @@ export const TrendScanner = () => {
           <StatusIndicator status={scanning ? "scanning" : loading ? "scanning" : "online"} />
         </div>
         <div className="flex items-center gap-3">
-          <button 
+          <button
             onClick={handleScan}
             disabled={scanning}
             className="flex items-center gap-2 px-3 py-1 rounded bg-primary/10 text-primary text-[10px] font-mono hover:bg-primary/20 transition-colors disabled:opacity-50"
@@ -55,10 +57,23 @@ export const TrendScanner = () => {
           </button>
           <div className="flex items-center gap-2 text-xs text-muted-foreground font-mono">
             <Clock className="h-3 w-3" />
-            {loading ? "Scanning..." : "Real-time Feed"}
+            {loading ? "Connecting..." : scanning ? "Scanning 4 niches..." : "Real-time Feed"}
           </div>
         </div>
       </div>
+
+      {/* Empty state — no fake data */}
+      {!loading && trends.length === 0 && (
+        <div className="flex flex-col items-center justify-center py-12 gap-3 text-center px-4">
+          <Search className="h-8 w-8 text-muted-foreground/40" />
+          <p className="text-sm font-mono text-muted-foreground">No trends yet</p>
+          <p className="text-xs text-muted-foreground/60">
+            Click <span className="text-primary">AUTONOMOUS SCAN</span> to scan all 4 niches and populate this feed.
+          </p>
+        </div>
+      )}
+
+      {/* Real trend list */}
       <div className="divide-y divide-border">
         {trends.map((trend, i) => (
           <div key={trend.id || i} className="p-3 hover:bg-secondary/50 transition-colors group cursor-pointer">
@@ -71,13 +86,17 @@ export const TrendScanner = () => {
                   <p className="text-sm font-medium truncate">{trend.topic}</p>
                   <div className="flex items-center gap-2 mt-0.5">
                     <span className="text-xs font-mono text-muted-foreground">{trend.niche}</span>
-                    <span className="text-xs font-mono text-success">{trend.velocity}</span>
+                    {trend.velocity && (
+                      <span className="text-xs font-mono text-success">{trend.velocity}</span>
+                    )}
                   </div>
                 </div>
               </div>
               <div className="flex items-center gap-3">
                 <div className="text-right">
-                  <p className="text-xs font-mono text-revenue">{trend.revenue}</p>
+                  {trend.revenue && (
+                    <p className="text-xs font-mono text-revenue">{trend.revenue}</p>
+                  )}
                   <div className="flex items-center gap-1 mt-0.5">
                     <div className="h-1.5 w-16 bg-secondary rounded-full overflow-hidden">
                       <div
@@ -85,10 +104,10 @@ export const TrendScanner = () => {
                           "h-full rounded-full",
                           trend.status === "hot" ? "bg-trending" : "bg-primary"
                         )}
-                        style={{ width: `${trend.score}%` }}
+                        style={{ width: `${trend.score ?? 50}%` }}
                       />
                     </div>
-                    <span className="text-xs font-mono text-muted-foreground">{trend.score}</span>
+                    <span className="text-xs font-mono text-muted-foreground">{trend.score ?? "—"}</span>
                   </div>
                 </div>
                 <div className={cn(
