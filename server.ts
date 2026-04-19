@@ -184,18 +184,9 @@ async function startServer() {
   });
 
   app.post("/api/ai/generate", async (req, res) => {
-    const { model, contents, prompt: directPrompt, type } = req.body;
+    const { contents, prompt: directPrompt, type } = req.body;
     try {
       await waitForRateLimit();
-      const { VertexAI } = await import("@google-cloud/vertexai");
-      const credentials = getGoogleCredentials();
-      const vertexAI = new VertexAI({
-        project: "neuraltube-app",
-        location: "europe-west1",
-        ...(credentials ? { googleAuthOptions: { credentials } } : {})
-      });
-      const gm = vertexAI.getGenerativeModel({ model: model || "gemini-1.5-flash" });
-      
       let prompt: string;
       if (directPrompt) {
         prompt = directPrompt;
@@ -208,12 +199,10 @@ async function startServer() {
       } else {
         return res.status(400).json({ error: 'prompt or contents is required' });
       }
-
-      const result = await gm.generateContent(prompt);
-      const text = result.response.candidates?.[0]?.content?.parts?.[0]?.text || "";
+      const text = await callStrategyAI(prompt);
       res.json({ text, type });
     } catch (error) {
-      console.error("Vertex AI Error:", error);
+      console.error("AI Generate Error:", error);
       res.status(500).json({ error: "AI Generation failed", details: error instanceof Error ? error.message : "Unknown error" });
     }
   });
