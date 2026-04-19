@@ -851,20 +851,26 @@ async function startServer() {
       };
       const searchTerm = nicheTermMap[niche] || niche;
 
-      const serpUrl = `https://serpapi.com/search.json?engine=google_trends&q=${encodeURIComponent(searchTerm)}&data_type=RELATED_QUERIES&api_key=${serpApiKey}`;
-      const serpRes = await axios.get(serpUrl, { timeout: 8000 });
-      const relatedQueries = serpRes.data?.related_queries?.rising || serpRes.data?.related_queries?.top || [];
-
-      const trends = relatedQueries.slice(0, 5).map((q: any, i: number) => ({
-        topic: q.query || q.topic?.title || `${niche} trend ${i + 1}`,
-        score: Math.min(99, 60 + Math.floor(Math.random() * 35)),
-        volume: q.value ? `${q.value}%` : 'Rising',
-        competition: 'Low',
-        potential: 'High',
-        status: i === 0 ? 'hot' : 'rising',
-      }));
-
-      res.json({ source: 'serpapi', niche, trends });
+      // Use interest_over_time (default SerpAPI Google Trends response)
+      const serpUrl = `https://serpapi.com/search.json?engine=google_trends&q=${encodeURIComponent(searchTerm)}&api_key=${serpApiKey}`;
+      const serpRes = await axios.get(serpUrl, { timeout: 10000 });
+      const timelineData = serpRes.data?.interest_over_time?.timeline_data || [];
+      // Get the last 5 data points and build trend objects
+      const recentPoints = timelineData.slice(-5);
+      const trends = recentPoints.length > 0
+        ? recentPoints.map((point: any, i: number) => {
+            const val = point.values?.[0]?.extracted_value || 50;
+            return {
+              topic: `${searchTerm} — ${point.date || `Week ${i + 1}`}`,
+              score: Math.min(99, val),
+              volume: `${val}%`,
+              competition: val > 70 ? 'High' : val > 40 ? 'Medium' : 'Low',
+              potential: val > 60 ? 'High' : 'Medium',
+              status: i === recentPoints.length - 1 ? 'hot' : 'rising',
+            };
+          })
+        : [{ topic: searchTerm, score: 75, volume: 'Rising', competition: 'Low', potential: 'High', status: 'rising' }];
+      res.json({ source: 'serpapi', niche, searchTerm, trends });
     } catch (error: any) {
       console.error('SerpAPI error:', error.message);
       res.status(500).json({ error: 'SerpAPI request failed', trends: [] });
