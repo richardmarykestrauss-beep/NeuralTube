@@ -7,7 +7,7 @@ import { useAuth } from "@/components/FirebaseProvider";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { doc, updateDoc, getDoc } from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { db } from "@/firebase";
 import { API_BASE_URL } from "@/config/api";
 
 function formatUptime(seconds: number): string {
