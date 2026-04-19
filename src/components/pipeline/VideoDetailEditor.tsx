@@ -4,7 +4,8 @@ import { LucideIcon } from "lucide-react";
 import { 
   FileText, Mic, Film, Image, Tags, Eye, 
   RefreshCw, Copy, Wand2, Volume2,
-  CheckCircle2, AlertTriangle, Loader2, ArrowLeft, Upload
+  CheckCircle2, AlertTriangle, Loader2, ArrowLeft, Upload,
+  Trophy, BarChart2, FlipHorizontal
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { generateVideoScript } from "@/services/geminiService";
@@ -25,6 +26,7 @@ export const VideoDetailEditor = () => {
   const [loading, setLoading] = useState(true);
   const [isRegenerating, setIsRegenerating] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [isGeneratingAB, setIsGeneratingAB] = useState(false);
 
   // Subscribe to all videos, pick the one matching videoId (or first in queue)
   useEffect(() => {
@@ -333,17 +335,141 @@ export const VideoDetailEditor = () => {
         )}
 
         {activeTab === "thumbnail" && (
-          <div className="p-6 space-y-4">
-            <p className="text-[10px] font-mono uppercase text-muted-foreground">THUMBNAIL</p>
-            {video.thumbnailUrl ? (
+          <div className="p-6 space-y-5">
+            <div className="flex items-center justify-between">
+              <p className="text-[10px] font-mono uppercase text-muted-foreground">A/B THUMBNAIL TESTING</p>
+              {video.thumbnailUrl && !video.thumbnailVariantA && (
+                <button
+                  onClick={async () => {
+                    if (!video.id) return;
+                    setIsGeneratingAB(true);
+                    try {
+                      // Generate variant A (original)
+                      const varA = video.thumbnailUrl!;
+                      // Generate variant B via backend with different style prompt
+                      const resp = await fetch(`${API_BASE_URL}/api/thumbnail`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ title: video.title, style: 'bold_contrast', niche: video.niche })
+                      });
+                      const data = await resp.json();
+                      const varB = data.thumbnailUrl || data.imageBase64 || varA;
+                      await updateDoc(doc(db, 'videos', video.id), {
+                        thumbnailVariantA: varA,
+                        thumbnailVariantB: varB,
+                        thumbnailCtrA: 0,
+                        thumbnailCtrB: 0,
+                        thumbnailWinner: null,
+                        thumbnailAbStatus: 'testing'
+                      });
+                      toast.success('A/B variants generated — select winner after testing');
+                    } catch (e) {
+                      toast.error('Failed to generate variant B');
+                    } finally {
+                      setIsGeneratingAB(false);
+                    }
+                  }}
+                  disabled={isGeneratingAB}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-primary/10 text-primary border border-primary/20 rounded text-xs font-mono hover:bg-primary/20 transition-colors disabled:opacity-50"
+                >
+                  {isGeneratingAB ? <Loader2 className="h-3 w-3 animate-spin" /> : <FlipHorizontal className="h-3 w-3" />}
+                  Generate A/B Variants
+                </button>
+              )}
+            </div>
+
+            {/* A/B Testing Panel */}
+            {video.thumbnailVariantA && video.thumbnailVariantB ? (
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  {/* Variant A */}
+                  <div className={cn(
+                    "rounded-lg border-2 overflow-hidden transition-all",
+                    video.thumbnailWinner === 'A' ? 'border-success' : 'border-border'
+                  )}>
+                    <div className="relative">
+                      <img src={video.thumbnailVariantA} alt="Variant A" className="w-full aspect-video object-cover" />
+                      {video.thumbnailWinner === 'A' && (
+                        <div className="absolute top-2 right-2 bg-success text-success-foreground rounded-full p-1">
+                          <Trophy className="h-3 w-3" />
+                        </div>
+                      )}
+                    </div>
+                    <div className="p-3 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-mono font-bold">VARIANT A</span>
+                        <span className="text-xs font-mono text-muted-foreground">CTR: {video.thumbnailCtrA?.toFixed(1) ?? '0.0'}%</span>
+                      </div>
+                      <div className="w-full bg-secondary/30 rounded-full h-1.5">
+                        <div className="bg-primary h-1.5 rounded-full transition-all" style={{ width: `${Math.min(100, (video.thumbnailCtrA || 0) * 10)}%` }} />
+                      </div>
+                      <div className="flex gap-2">
+                        <button onClick={async () => {
+                          if (!video.id) return;
+                          await updateDoc(doc(db, 'videos', video.id), { thumbnailCtrA: (video.thumbnailCtrA || 0) + 0.5 });
+                        }} className="flex-1 text-xs py-1 bg-secondary/30 rounded hover:bg-secondary/50 transition-colors">+0.5% CTR</button>
+                        <button onClick={async () => {
+                          if (!video.id) return;
+                          await updateDoc(doc(db, 'videos', video.id), { thumbnailWinner: 'A', thumbnailUrl: video.thumbnailVariantA, thumbnailAbStatus: 'complete' });
+                          toast.success('Variant A selected as winner');
+                        }} className="flex-1 text-xs py-1 bg-success/20 text-success rounded hover:bg-success/30 transition-colors">Select Winner</button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Variant B */}
+                  <div className={cn(
+                    "rounded-lg border-2 overflow-hidden transition-all",
+                    video.thumbnailWinner === 'B' ? 'border-success' : 'border-border'
+                  )}>
+                    <div className="relative">
+                      <img src={video.thumbnailVariantB} alt="Variant B" className="w-full aspect-video object-cover" />
+                      {video.thumbnailWinner === 'B' && (
+                        <div className="absolute top-2 right-2 bg-success text-success-foreground rounded-full p-1">
+                          <Trophy className="h-3 w-3" />
+                        </div>
+                      )}
+                    </div>
+                    <div className="p-3 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-mono font-bold">VARIANT B</span>
+                        <span className="text-xs font-mono text-muted-foreground">CTR: {video.thumbnailCtrB?.toFixed(1) ?? '0.0'}%</span>
+                      </div>
+                      <div className="w-full bg-secondary/30 rounded-full h-1.5">
+                        <div className="bg-accent h-1.5 rounded-full transition-all" style={{ width: `${Math.min(100, (video.thumbnailCtrB || 0) * 10)}%` }} />
+                      </div>
+                      <div className="flex gap-2">
+                        <button onClick={async () => {
+                          if (!video.id) return;
+                          await updateDoc(doc(db, 'videos', video.id), { thumbnailCtrB: (video.thumbnailCtrB || 0) + 0.5 });
+                        }} className="flex-1 text-xs py-1 bg-secondary/30 rounded hover:bg-secondary/50 transition-colors">+0.5% CTR</button>
+                        <button onClick={async () => {
+                          if (!video.id) return;
+                          await updateDoc(doc(db, 'videos', video.id), { thumbnailWinner: 'B', thumbnailUrl: video.thumbnailVariantB, thumbnailAbStatus: 'complete' });
+                          toast.success('Variant B selected as winner');
+                        }} className="flex-1 text-xs py-1 bg-success/20 text-success rounded hover:bg-success/30 transition-colors">Select Winner</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* A/B Status */}
+                <div className="flex items-center gap-2 text-xs font-mono">
+                  <BarChart2 className="h-3.5 w-3.5 text-primary" />
+                  <span className={cn(
+                    video.thumbnailAbStatus === 'complete' ? 'text-success' : 'text-warning'
+                  )}>
+                    {video.thumbnailAbStatus === 'complete'
+                      ? `Test complete — Variant ${video.thumbnailWinner} wins`
+                      : 'Test in progress — track CTR from YouTube Studio'}
+                  </span>
+                </div>
+              </div>
+            ) : video.thumbnailUrl ? (
               <div className="space-y-3">
-                <img
-                  src={video.thumbnailUrl}
-                  alt="Video thumbnail"
-                  className="rounded-lg border border-border max-w-sm object-cover aspect-video"
-                />
+                <img src={video.thumbnailUrl} alt="Video thumbnail" className="rounded-lg border border-border max-w-sm object-cover aspect-video" />
                 <p className="text-xs font-mono text-success flex items-center gap-1">
-                  <CheckCircle2 className="h-3 w-3" /> Thumbnail generated
+                  <CheckCircle2 className="h-3 w-3" /> Thumbnail ready — click "Generate A/B Variants" to start split testing
                 </p>
               </div>
             ) : (

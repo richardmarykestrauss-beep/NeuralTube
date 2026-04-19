@@ -16,6 +16,7 @@ import SettingsPage from "./pages/SettingsPage.tsx";
 import YouTubeChannelPage from "./pages/YouTubeChannelPage.tsx";
 import CodeAuditorPage from "./pages/CodeAuditorPage.tsx";
 import StrategyPage from "./pages/StrategyPage.tsx";
+import CompetitorPage from "./pages/CompetitorPage.tsx";
 import NotFound from "./pages/NotFound.tsx";
 
 const queryClient = new QueryClient();
@@ -41,6 +42,7 @@ const App = () => (
               <Route path="settings" element={<SettingsPage />} />
               <Route path="code-auditor" element={<CodeAuditorPage />} />
               <Route path="strategy" element={<StrategyPage />} />
+              <Route path="competitors" element={<CompetitorPage />} />
             </Route>
             <Route path="*" element={<NotFound />} />
           </Routes>

@@ -59,6 +59,13 @@ export interface Video {
   videoFileSizeBytes?: number;
   voiceoverBase64?: string;
   visualKeywords?: string[];
+  // A/B Thumbnail Testing
+  thumbnailVariantA?: string;  // base64 or URL of variant A
+  thumbnailVariantB?: string;  // base64 or URL of variant B
+  thumbnailCtrA?: number;      // click-through rate for variant A
+  thumbnailCtrB?: number;      // click-through rate for variant B
+  thumbnailWinner?: 'A' | 'B' | null;
+  thumbnailAbStatus?: 'pending' | 'testing' | 'complete';
 }
 
 export interface AILog {

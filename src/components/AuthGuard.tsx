@@ -2,7 +2,7 @@ import React from 'react';
 import { useAuth } from './FirebaseProvider';
 import { auth } from '@/firebase';
 import { GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
-import { LogIn, Loader2 } from 'lucide-react';
+import { Zap, Loader2 } from 'lucide-react';
 
 export const AuthGuard: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, loading } = useAuth();
@@ -29,12 +29,12 @@ export const AuthGuard: React.FC<{ children: React.ReactNode }> = ({ children })
       <div className="min-h-screen bg-background flex flex-col items-center justify-center p-4">
         <div className="max-w-md w-full bg-card border border-border rounded-xl p-8 text-center space-y-6">
           <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mx-auto">
-            <LogIn className="h-8 w-8 text-primary" />
+            <Zap className="h-8 w-8 text-primary" />
           </div>
           <div className="space-y-2">
-            <h1 className="text-2xl font-bold tracking-tight">TrendForge AI</h1>
+            <h1 className="text-2xl font-bold tracking-tight">NeuralTube</h1>
             <p className="text-muted-foreground text-sm">
-              Please sign in with your Google account to access the Command Center.
+              AI-powered YouTube automation. Sign in to access your Command Center.
             </p>
           </div>
           <button
