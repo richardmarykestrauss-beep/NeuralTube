@@ -131,8 +131,22 @@ Return ONLY a valid JSON array with this exact structure (no markdown, no explan
   return extractJSON(text) as NicheAnalysis[];
 };
 
-// ─── Scan For Trends ──────────────────────────────────────────────────────────
+// ─── Scan For Trends (SerpAPI + Gemini fallback) ─────────────────────────────
 export const scanForTrends = async (niche: string): Promise<TrendScanResult[]> => {
+  // Try SerpAPI Google Trends first
+  try {
+    const serpRes = await fetch(`${API_BASE_URL}/api/trends/serp?niche=${encodeURIComponent(niche)}`);
+    if (serpRes.ok) {
+      const serpData = await serpRes.json();
+      if (Array.isArray(serpData.trends) && serpData.trends.length > 0) {
+        return serpData.trends as TrendScanResult[];
+      }
+    }
+  } catch {
+    // SerpAPI unavailable — fall through to Gemini
+  }
+
+  // Fallback: Gemini AI trend generation
   const prompt = `You are a YouTube trend analyst. Identify the top 3 trending, high-potential video topics in the "${niche}" niche right now in 2026.
 Focus on topics with high search volume but low competition.
 

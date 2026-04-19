@@ -3,7 +3,7 @@ import { useState, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { 
   Activity, LayoutDashboard, Film, Eye, Target, DollarSign, Brain, Settings, 
-  ChevronLeft, ChevronRight, HelpCircle, Youtube, Loader2, Shield, Rocket
+  ChevronLeft, ChevronRight, HelpCircle, Youtube, Loader2, Shield, Rocket, Bell
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { StatusIndicator } from "./dashboard/StatusIndicator";
@@ -11,6 +11,8 @@ import { useAuth } from "./FirebaseProvider";
 import { doc, updateDoc } from "firebase/firestore";
 import { db } from "@/firebase";
 import { toast } from "sonner";
+import { subscribeToLogs, AILog } from "@/services/firestoreService";
+import { NotificationsPanel } from "./NotificationsPanel";
 
 const navItems = [
   { id: "/", label: "Dashboard", icon: LayoutDashboard },
@@ -29,9 +31,24 @@ const navItems = [
 export const AppSidebar = () => {
   const [collapsed, setCollapsed] = useState(false);
   const [connecting, setConnecting] = useState(false);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [logs, setLogs] = useState<AILog[]>([]);
+  const [lastSeenCount, setLastSeenCount] = useState(0);
   const navigate = useNavigate();
   const location = useLocation();
   const { profile, user } = useAuth();
+
+  const unreadCount = Math.max(0, logs.length - lastSeenCount);
+
+  useEffect(() => {
+    const unsub = subscribeToLogs((data) => setLogs(data));
+    return () => unsub();
+  }, []);
+
+  const handleOpenNotifications = () => {
+    setShowNotifications(true);
+    setLastSeenCount(logs.length);
+  };
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
@@ -95,12 +112,27 @@ export const AppSidebar = () => {
           <Activity className="h-4 w-4 text-primary-foreground" />
         </div>
         {!collapsed && (
-          <div className="overflow-hidden">
+          <div className="overflow-hidden flex-1">
             <h1 className="text-sm font-bold tracking-tight">NEURAL<span className="text-primary">TUBE</span></h1>
             <p className="text-[9px] font-mono text-muted-foreground">v2.4</p>
           </div>
         )}
+        <button onClick={handleOpenNotifications} className="relative shrink-0 p-1 rounded hover:bg-secondary transition-colors">
+          <Bell className="h-4 w-4 text-muted-foreground" />
+          {unreadCount > 0 && (
+            <span className="absolute -top-0.5 -right-0.5 h-4 w-4 bg-destructive text-destructive-foreground text-[9px] font-bold rounded-full flex items-center justify-center">
+              {unreadCount > 9 ? '9+' : unreadCount}
+            </span>
+          )}
+        </button>
       </div>
+
+      {/* Notifications Panel */}
+      <NotificationsPanel
+        open={showNotifications}
+        onClose={() => setShowNotifications(false)}
+        logs={logs}
+      />
 
       {/* System Status */}
       {!collapsed && (
