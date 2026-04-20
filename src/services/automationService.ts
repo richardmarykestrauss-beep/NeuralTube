@@ -4,6 +4,43 @@ import { collection, addDoc, serverTimestamp, query, where, getDocs, updateDoc, 
 import { toast } from "sonner";
 import { API_BASE_URL } from "../config/api";
 
+// ─── Free Tier Throttle Guards ────────────────────────────────────────────────
+// YouTube Data API: 10,000 units/day. Each upload = 1,600 units → max 6/day.
+// Google TTS: 1M chars/month → ~110 videos/month → ~3.6/day.
+// Safe daily cap: 3 videos per day to stay within all free tiers.
+const VIDEO_DAILY_CAP = 3;
+const VIDEO_COUNT_KEY = "neuraltube_video_count";
+// SerpAPI: 100 searches/month. Cap: scan max 2 niches per automated cycle.
+export const SCAN_NICHE_CAP = 2;
+
+function getVideosCreatedToday(): number {
+  try {
+    const stored = localStorage.getItem(VIDEO_COUNT_KEY);
+    if (!stored) return 0;
+    const { date, count } = JSON.parse(stored);
+    const today = new Date().toISOString().split("T")[0];
+    if (date !== today) return 0;
+    return count || 0;
+  } catch { return 0; }
+}
+
+function incrementVideoCount(): void {
+  try {
+    const today = new Date().toISOString().split("T")[0];
+    const current = getVideosCreatedToday();
+    localStorage.setItem(VIDEO_COUNT_KEY, JSON.stringify({ date: today, count: current + 1 }));
+  } catch { /* ignore */ }
+}
+
+export function videoDailyCapReached(): boolean {
+  return getVideosCreatedToday() >= VIDEO_DAILY_CAP;
+}
+
+export function getVideoDailyStatus(): { used: number; cap: number; remaining: number } {
+  const used = getVideosCreatedToday();
+  return { used, cap: VIDEO_DAILY_CAP, remaining: Math.max(0, VIDEO_DAILY_CAP - used) };
+}
+
 export const runAutonomousScan = async (niche: string, authorUid: string) => {
   try {
     await addDoc(collection(db, "ai_logs"), {
@@ -11,6 +48,16 @@ export const runAutonomousScan = async (niche: string, authorUid: string) => {
       type: "info",
       timestamp: serverTimestamp()
     });
+
+    // Check daily video cap before auto-initiating pipelines
+    if (videoDailyCapReached()) {
+      await addDoc(collection(db, "ai_logs"), {
+        event: `Daily video cap (${VIDEO_DAILY_CAP}) reached — pipeline auto-start paused to protect free tier quota. Resets at midnight.`,
+        type: "warning",
+        timestamp: serverTimestamp()
+      });
+      return;
+    }
 
     const trends = await scanForTrends(niche);
 
@@ -54,6 +101,7 @@ export const runAutonomousScan = async (niche: string, authorUid: string) => {
             createdAt: serverTimestamp()
           });
 
+          incrementVideoCount();
           processVideoPipeline(videoDoc.id, trend.topic, niche);
         }
       }
