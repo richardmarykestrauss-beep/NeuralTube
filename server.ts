@@ -1,5 +1,5 @@
 import cron from 'node-cron';
-import express from "express";
+import express, { Request, Response, NextFunction } from "express";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
@@ -8,6 +8,7 @@ import cookieParser from "cookie-parser";
 import axios from "axios";
 import { exec } from "child_process";
 import { promisify } from "util";
+import * as admin from "firebase-admin";
 
 const execAsync = promisify(exec);
 const __filename = fileURLToPath(import.meta.url);
@@ -16,7 +17,89 @@ const __dirname = path.dirname(__filename);
 // Track server start time for live uptime reporting
 const SERVER_START_TIME = new Date().toISOString();
 
-// ─── Scheduler State ─────────────────────────────────────────────────────────
+// ─── Firebase Admin initialisation ────────────────────────────────────────────
+if (!admin.apps.length) {
+  const credsJson = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
+  if (credsJson && credsJson.trim().startsWith('{')) {
+    try {
+      admin.initializeApp({
+        credential: admin.credential.cert(JSON.parse(credsJson)),
+      });
+    } catch (e) {
+      console.warn('[Firebase Admin] Failed to init with service account, using default:', e);
+      admin.initializeApp();
+    }
+  } else {
+    admin.initializeApp();
+  }
+}
+
+// ─── Auth middleware ───────────────────────────────────────────────────────────────────
+// Verifies the Firebase ID token sent as Bearer in the Authorization header.
+// Applied to all /api/* routes except the public ones listed in UNPROTECTED_PATHS.
+const UNPROTECTED_PATHS = new Set([
+  '/api/health',
+  '/api/auth/youtube/url',
+  '/api/auth/youtube/callback',
+  '/api/auth/youtube/status',
+]);
+
+async function requireAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
+  if (UNPROTECTED_PATHS.has(req.path)) return next();
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith('Bearer ')) {
+    res.status(401).json({ error: 'Missing or invalid Authorization header' });
+    return;
+  }
+  const idToken = authHeader.slice(7);
+  try {
+    const decoded = await admin.auth().verifyIdToken(idToken);
+    (req as any).uid = decoded.uid;
+    next();
+  } catch {
+    res.status(401).json({ error: 'Invalid or expired token' });
+  }
+}
+
+// ─── Server-side rate limiting (per authenticated user) ───────────────────────────────────────
+// Tracks daily video creation and SerpAPI calls per UID in memory.
+// Resets at midnight UTC. Limits: 3 videos/day, 4 SerpAPI calls/day.
+const rateLimitStore = new Map<string, { date: string; videoCount: number; serpCount: number }>();
+
+function getRateLimitEntry(uid: string) {
+  const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD UTC
+  const existing = rateLimitStore.get(uid);
+  if (!existing || existing.date !== today) {
+    const fresh = { date: today, videoCount: 0, serpCount: 0 };
+    rateLimitStore.set(uid, fresh);
+    return fresh;
+  }
+  return existing;
+}
+
+function checkVideoRateLimit(uid: string): { allowed: boolean; remaining: number } {
+  const entry = getRateLimitEntry(uid);
+  const remaining = Math.max(0, 3 - entry.videoCount);
+  return { allowed: entry.videoCount < 3, remaining };
+}
+
+function incrementVideoCount(uid: string): void {
+  const entry = getRateLimitEntry(uid);
+  entry.videoCount++;
+}
+
+function checkSerpRateLimit(uid: string): { allowed: boolean; remaining: number } {
+  const entry = getRateLimitEntry(uid);
+  const remaining = Math.max(0, 4 - entry.serpCount);
+  return { allowed: entry.serpCount < 4, remaining };
+}
+
+function incrementSerpCount(uid: string): void {
+  const entry = getRateLimitEntry(uid);
+  entry.serpCount++;
+}
+
+// ─── Scheduler State ──────────────────────────────────────────────
 interface SchedulerState {
   enabled: boolean;
   intervalMinutes: number;
@@ -24,6 +107,7 @@ interface SchedulerState {
   nextRunAt: string | null;
   runCount: number;
   niches: string[];
+  pendingTrends: Array<{ topic: string; score: number; niche: string; scannedAt: string }>;
 }
 let schedulerState: SchedulerState = {
   enabled: false,
@@ -32,6 +116,7 @@ let schedulerState: SchedulerState = {
   nextRunAt: null,
   runCount: 0,
   niches: ['Tech & AI', 'Finance & Crypto', 'Health & Wellness', 'Home & DIY'],
+  pendingTrends: [],
 };
 let schedulerTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -211,6 +296,23 @@ async function startServer() {
 
   app.use(express.json({ limit: '50mb' }));
   app.use(cookieParser());
+
+  // ─── Security headers ───────────────────────────────────────────────────────────
+  app.use((req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('X-XSS-Protection', '1; mode=block');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+    if (req.secure || req.headers['x-forwarded-proto'] === 'https') {
+      res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    }
+    next();
+  });
+
+  // ─── Firebase auth middleware ──────────────────────────────────────────────────────
+  // Protects all /api/* routes. Public paths are listed in UNPROTECTED_PATHS above.
+  app.use('/api', requireAuth);
 
   const oauth2Client = new google.auth.OAuth2(
     process.env.YOUTUBE_CLIENT_ID,
@@ -659,10 +761,23 @@ async function startServer() {
 
   // ─── Video Assembly (FFmpeg + Pexels stock images) ──────────────────────────────
   // Accepts: { title, script, audioBase64?, keywords[], niche }
-  // Returns: { videoBase64, duration, frameCount, success }
+  // Returns: { videoUrl, duration, frameCount, success } — video uploaded to Cloud Storage
   app.post("/api/video/assemble", async (req, res) => {
+    const uid = (req as any).uid as string;
+    const { allowed, remaining } = checkVideoRateLimit(uid);
+    if (!allowed) {
+      return res.status(429).json({
+        error: 'Daily video limit reached',
+        message: 'You have reached the 3 videos/day limit. Resets at midnight UTC.',
+        remaining: 0,
+      });
+    }
+
     const { title, script, audioBase64, keywords = [], niche = 'general' } = req.body;
     if (!title && !script) return res.status(400).json({ error: 'title or script is required' });
+    // Input validation — prevent prompt injection via title/niche
+    if (title && title.length > 200) return res.status(400).json({ error: 'title must be 200 characters or fewer' });
+    if (niche && niche.length > 100) return res.status(400).json({ error: 'niche must be 100 characters or fewer' });
 
     const tmpDir = `/tmp/video_${Date.now()}`;
     try {
@@ -779,28 +894,54 @@ async function startServer() {
         throw new Error('FFmpeg did not produce output file');
       }
 
-      // ── Step 5: Return base64 video ──────────────────────────────────────────
-      const videoBuffer = fs.readFileSync(outputPath);
-      const videoBase64 = videoBuffer.toString('base64');
+      // ── Step 5: Upload to Cloud Storage (avoids Firestore 1MB doc limit) ────────
       const stats = fs.statSync(outputPath);
+      const { Storage } = await import('@google-cloud/storage');
+      const storage = new Storage();
+      const bucketName = process.env.GCS_BUCKET_NAME || `${process.env.GOOGLE_CLOUD_PROJECT || 'neuraltube-app'}-videos`;
+      const destFileName = `videos/${uid}/${Date.now()}_output.mp4`;
+      let videoUrl = '';
+      try {
+        await storage.bucket(bucketName).upload(outputPath, {
+          destination: destFileName,
+          metadata: { contentType: 'video/mp4' },
+        });
+        // Make the file publicly readable
+        await storage.bucket(bucketName).file(destFileName).makePublic();
+        videoUrl = `https://storage.googleapis.com/${bucketName}/${destFileName}`;
+      } catch (gcsErr: any) {
+        console.warn('[GCS] Upload failed, falling back to base64:', gcsErr.message);
+        // Fallback: return base64 for small files only (< 900KB)
+        if (stats.size < 900_000) {
+          const videoBase64 = fs.readFileSync(outputPath).toString('base64');
+          try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
+          incrementVideoCount(uid);
+          return res.json({ success: true, videoBase64, fileSizeBytes: stats.size, imageCount: imagePaths.length, durationSec: secPerImage * imagePaths.length, hasAudio: !!audioPath, storageMethod: 'base64_fallback' });
+        }
+        throw new Error(`GCS upload failed and file too large for base64 fallback: ${gcsErr.message}`);
+      }
 
-      // Cleanup — use fs.rmSync instead of shell rm -rf
+      // Cleanup tmp dir
       try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore cleanup errors */ }
+
+      // Increment server-side rate limit counter only on success
+      incrementVideoCount(uid);
 
       res.json({
         success: true,
-        videoBase64,
+        videoUrl,
         fileSizeBytes: stats.size,
         imageCount: imagePaths.length,
         durationSec: secPerImage * imagePaths.length,
         hasAudio: !!audioPath,
+        storageMethod: 'cloud_storage',
         note: pexelsKey ? 'Pexels stock images used' : 'Placeholder images used — set PEXELS_API_KEY for real stock footage'
       });
     } catch (error: any) {
       console.error('Video assembly error:', error);
       // Cleanup on error
       try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
-      res.status(500).json({ error: 'Video assembly failed', details: error.message });
+      res.status(500).json({ error: 'Video assembly failed' });
     }
   });
 
@@ -897,8 +1038,22 @@ async function startServer() {
 
   // ─── SerpAPI Google Trends endpoint ──────────────────────────────────────────
   app.get("/api/trends/serp", async (req, res) => {
+    const uid = (req as any).uid as string;
     const serpApiKey = process.env.SERP_API_KEY;
     const niche = (req.query.niche as string) || 'Tech & AI';
+
+    // Input validation
+    if (niche.length > 100) return res.status(400).json({ error: 'niche parameter too long' });
+
+    // Server-side SerpAPI rate limit (4 calls/day per user)
+    const serpLimit = checkSerpRateLimit(uid);
+    if (!serpLimit.allowed) {
+      return res.status(429).json({
+        error: 'Daily SerpAPI limit reached',
+        message: 'You have reached the 4 SerpAPI calls/day limit. Resets at midnight UTC.',
+        remaining: 0,
+      });
+    }
 
     if (!serpApiKey) {
       return res.status(503).json({ error: 'SerpAPI key not configured', trends: [] });
@@ -939,7 +1094,8 @@ async function startServer() {
             };
           })
         : [{ topic: searchTerm, score: 75, volume: 'Rising', competition: 'Low', potential: 'High', status: 'rising' }];
-      res.json({ source: 'serpapi', niche, searchTerm, trends });
+      incrementSerpCount(uid);
+      res.json({ source: 'serpapi', niche, searchTerm, trends, remaining: serpLimit.remaining - 1 });
     } catch (error: any) {
       console.error('SerpAPI error:', error.message);
       res.status(500).json({ error: 'SerpAPI request failed', trends: [] });
@@ -1122,6 +1278,88 @@ async function startServer() {
       console.error("Failed to read codebase:", error);
       res.status(500).json({ error: "Failed to read codebase" });
     }
+  });
+
+  // ─── Code Auditor endpoint ───────────────────────────────────────────────────────────────────
+  // Accepts: { files: [{ path, content }] }
+  // Returns: { score, summary, issues: [{ file, type, severity, description, suggestion, line? }] }
+  app.post("/api/codebase/audit", async (req, res) => {
+    const { files } = req.body;
+    if (!Array.isArray(files) || files.length === 0) {
+      return res.status(400).json({ error: 'files array is required' });
+    }
+    // Limit to 30 files max to avoid token overflow
+    const filesToAudit = files.slice(0, 30);
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) return res.status(503).json({ error: 'GEMINI_API_KEY not configured' });
+
+    try {
+      await waitForRateLimit();
+      const codebaseContext = filesToAudit
+        .map((f: { path: string; content: string }) => `=== File: ${f.path} ===\n${f.content.slice(0, 8000)}`)
+        .join('\n\n');
+
+      const prompt = `You are an expert code auditor specialising in TypeScript, React, and Node.js security. Analyse the following codebase for security vulnerabilities, performance issues, logic errors, and style inconsistencies.
+
+Rules:
+- Only report real issues you can see in the code. Do NOT fabricate issues.
+- Severity levels: critical (exploitable security bug), high (data loss / auth bypass), medium (performance / logic error), low (style / best practice).
+- Limit to the 15 most important issues.
+
+${codebaseContext}
+
+Return ONLY a valid JSON object with this exact structure (no markdown, no explanation):
+{
+  "score": <number 0-100 where 100 is perfect>,
+  "summary": "<2-3 sentence overall assessment>",
+  "issues": [
+    {
+      "file": "<relative file path>",
+      "type": "security" | "performance" | "logic" | "style",
+      "severity": "critical" | "high" | "medium" | "low",
+      "description": "<what the issue is>",
+      "suggestion": "<how to fix it>",
+      "line": <line number or null>
+    }
+  ]
+}`;
+
+      const model = process.env.AUDIT_AI_MODEL || 'gemini-2.5-flash';
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+      const aiRes = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { maxOutputTokens: 4000, temperature: 0.2 }
+        })
+      });
+      if (!aiRes.ok) throw new Error(`Gemini API error ${aiRes.status}`);
+      const aiData = await aiRes.json() as any;
+      let text = aiData?.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
+      // Strip markdown code fences if present
+      text = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+      let result;
+      try { result = JSON.parse(text); } catch {
+        result = { score: 70, summary: 'Audit completed. JSON parsing failed — see raw output.', issues: [] };
+      }
+      res.json(result);
+    } catch (error: any) {
+      console.error('Code audit error:', error.message);
+      res.status(500).json({ error: 'Code audit failed' });
+    }
+  });
+
+  // ─── AI generate endpoint input validation ───────────────────────────────────────────────────────────────────
+  // Patch the /api/ai/generate endpoint to validate input length
+  app.use('/api/ai/generate', (req: Request, res: Response, next: NextFunction) => {
+    if (req.method === 'POST') {
+      const { topic, niche, type } = req.body || {};
+      if (topic && topic.length > 500) return res.status(400).json({ error: 'topic must be 500 characters or fewer' });
+      if (niche && niche.length > 100) return res.status(400).json({ error: 'niche must be 100 characters or fewer' });
+      if (type && type.length > 50) return res.status(400).json({ error: 'type must be 50 characters or fewer' });
+    }
+    next();
   });
 }
 

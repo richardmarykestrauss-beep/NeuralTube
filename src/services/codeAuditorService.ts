@@ -1,17 +1,5 @@
-import { GoogleGenAI, Type } from "@google/genai";
-
-let genAI: GoogleGenAI | null = null;
-
-const getGenAI = () => {
-  if (!genAI) {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      throw new Error("GEMINI_API_KEY is not defined.");
-    }
-    genAI = new GoogleGenAI({ apiKey });
-  }
-  return genAI;
-};
+import { API_BASE_URL } from "@/config/api";
+import { auth } from "@/firebase";
 
 export interface AuditIssue {
   file: string;
@@ -29,63 +17,20 @@ export interface AuditResult {
 }
 
 export const auditCodebase = async (files: { path: string; content: string }[]): Promise<AuditResult> => {
-  const ai = getGenAI();
-  
-  const codebaseContext = files.map(f => `File: ${f.path}\nContent:\n${f.content}`).join("\n\n---\n\n");
-
-  const response = await ai.models.generateContent({
-    model: "gemini-3.1-pro-preview",
-    contents: [{ 
-      role: "user", 
-      parts: [{ 
-        text: `You are an expert AI Code Auditor. Analyze the following codebase for security vulnerabilities, performance bottlenecks, logic errors, and style inconsistencies.
-        
-        ${codebaseContext}
-        
-        Return your analysis as a JSON object matching this schema:
-        {
-          "score": number (0-100),
-          "summary": string,
-          "issues": [
-            {
-              "file": string,
-              "type": "security" | "performance" | "logic" | "style",
-              "severity": "low" | "medium" | "high" | "critical",
-              "description": string,
-              "suggestion": string,
-              "line": number (optional)
-            }
-          ]
-        }` 
-      }] 
-    }],
-    config: {
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          score: { type: Type.NUMBER },
-          summary: { type: Type.STRING },
-          issues: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                file: { type: Type.STRING },
-                type: { type: Type.STRING, enum: ["security", "performance", "logic", "style"] },
-                severity: { type: Type.STRING, enum: ["low", "medium", "high", "critical"] },
-                description: { type: Type.STRING },
-                suggestion: { type: Type.STRING },
-                line: { type: Type.NUMBER },
-              },
-              required: ["file", "type", "severity", "description", "suggestion"],
-            },
-          },
-        },
-        required: ["score", "summary", "issues"],
-      },
+  const user = auth.currentUser;
+  if (!user) throw new Error("You must be signed in to run a code audit.");
+  const idToken = await user.getIdToken();
+  const response = await fetch(`${API_BASE_URL}/api/codebase/audit`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${idToken}`,
     },
+    body: JSON.stringify({ files }),
   });
-
-  return JSON.parse(response.text);
+  if (!response.ok) {
+    const errData = await response.json().catch(() => ({}));
+    throw new Error(errData.error || `Audit request failed with status ${response.status}`);
+  }
+  return response.json() as Promise<AuditResult>;
 };
