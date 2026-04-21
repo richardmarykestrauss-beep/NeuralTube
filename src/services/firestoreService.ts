@@ -1,12 +1,15 @@
-import { 
-  collection, 
-  onSnapshot, 
-  query, 
-  orderBy, 
-  addDoc, 
-  updateDoc, 
-  doc, 
+import {
+  collection,
+  onSnapshot,
+  query,
+  orderBy,
+  addDoc,
+  updateDoc,
+  doc,
   serverTimestamp,
+  setDoc,
+  deleteDoc,
+  getDocs,
   Timestamp
 } from 'firebase/firestore';
 import { db } from '@/firebase';
@@ -27,6 +30,7 @@ export interface Trend {
 }
 
 export interface Video {
+  channelId?: string;
   id?: string;
   title: string;
   stage: 'research' | 'ideation' | 'scripting' | 'voiceover' | 'visuals' | 'thumbnail' | 'assembly' | 'seo' | 'review' | 'publish' | 'error';
@@ -68,6 +72,20 @@ export interface Video {
   thumbnailAbStatus?: 'pending' | 'testing' | 'complete';
 }
 
+export interface Channel {
+  channelId: string;
+  channelName: string;
+  youtubeChannelId: string;
+  youtubeChannelTitle: string;
+  youtubeChannelThumbnail: string;
+  youtubeTokens: { access_token?: string; refresh_token: string; expiry_date?: number };
+  niche: string;
+  isActive: boolean;
+  createdAt?: Timestamp;
+  totalVideosPublished: number;
+  lastPublishedAt?: Timestamp | null;
+}
+
 export interface AILog {
   id?: string;
   event: string;
@@ -104,11 +122,37 @@ export const subscribeToTrends = (callback: (trends: Trend[]) => void) => {
   });
 };
 
+// Channel Service
+export const subscribeToChannels = (uid: string, callback: (channels: Channel[]) => void) => {
+  const q = query(collection(db, 'users', uid, 'channels'), orderBy('createdAt', 'desc'));
+  return onSnapshot(q, (snapshot) => {
+    const channels = snapshot.docs.map(d => ({ channelId: d.id, ...d.data() } as Channel));
+    callback(channels);
+  }, (error) => {
+    handleFirestoreError(error, OperationType.LIST, 'channels');
+  });
+};
+
+export const saveChannel = async (uid: string, channel: Channel) => {
+  const ref = doc(db, 'users', uid, 'channels', channel.channelId);
+  await setDoc(ref, { ...channel, createdAt: serverTimestamp() }, { merge: true });
+};
+
+export const deleteChannel = async (uid: string, channelId: string) => {
+  await deleteDoc(doc(db, 'users', uid, 'channels', channelId));
+};
+
+export const getChannels = async (uid: string): Promise<Channel[]> => {
+  const snap = await getDocs(collection(db, 'users', uid, 'channels'));
+  return snap.docs.map(d => ({ channelId: d.id, ...d.data() } as Channel));
+};
+
 // Videos Service
-export const subscribeToVideos = (callback: (videos: Video[]) => void) => {
+export const subscribeToVideos = (callback: (videos: Video[]) => void, channelId?: string | null) => {
   const q = query(collection(db, 'videos'), orderBy('createdAt', 'desc'));
   return onSnapshot(q, (snapshot) => {
-    const videos = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Video));
+    let videos = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Video));
+    if (channelId) videos = videos.filter(v => v.channelId === channelId);
     callback(videos);
   }, (error) => {
     handleFirestoreError(error, OperationType.LIST, 'videos');

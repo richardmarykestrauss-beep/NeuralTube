@@ -61,6 +61,22 @@ async function requireAuth(req: Request, res: Response, next: NextFunction): Pro
   }
 }
 
+// ─── Multi-channel: resolve refresh token for a given channel ─────────────────
+// If channelId is provided, reads tokens from Firestore users/{uid}/channels/{channelId}.
+// Falls back to YOUTUBE_REFRESH_TOKEN env var for single-channel / legacy setups.
+async function getRefreshTokenForChannel(uid: string, channelId?: string | null): Promise<string> {
+  if (channelId) {
+    const channelDoc = await admin.firestore()
+      .doc(`users/${uid}/channels/${channelId}`)
+      .get();
+    const token = channelDoc.data()?.youtubeTokens?.refresh_token;
+    if (token) return token;
+  }
+  const envToken = process.env.YOUTUBE_REFRESH_TOKEN;
+  if (envToken) return envToken;
+  throw new Error('YouTube not connected. Connect a channel or set YOUTUBE_REFRESH_TOKEN.');
+}
+
 // ─── Server-side rate limiting (per authenticated user) ───────────────────────────────────────
 // Tracks daily video creation and SerpAPI calls per UID in memory.
 // Resets at midnight UTC. Limits: 3 videos/day, 4 SerpAPI calls/day.
@@ -322,13 +338,16 @@ async function startServer() {
 
   // ─── YouTube Auth Status ────────────────────────────────────────────────────
   app.get("/api/auth/youtube/status", async (req, res) => {
-    const refreshToken = process.env.YOUTUBE_REFRESH_TOKEN;
+    const channelId = req.query.channelId as string | undefined;
+    const uid = (req as any).uid as string | undefined;
     const clientId = process.env.YOUTUBE_CLIENT_ID;
     const clientSecret = process.env.YOUTUBE_CLIENT_SECRET;
-    if (!refreshToken || !clientId || !clientSecret) {
+    if (!clientId || !clientSecret) {
       return res.json({ connected: false, authenticated: false, reason: 'credentials_missing' });
     }
-    // Attempt a lightweight API call to verify the token is still valid
+    let refreshToken: string | undefined;
+    try { refreshToken = uid ? await getRefreshTokenForChannel(uid, channelId) : process.env.YOUTUBE_REFRESH_TOKEN; } catch { /* fall through */ }
+    if (!refreshToken) return res.json({ connected: false, authenticated: false, reason: 'credentials_missing' });
     try {
       const statusClient = new google.auth.OAuth2(clientId, clientSecret);
       statusClient.setCredentials({ refresh_token: refreshToken });
@@ -354,10 +373,11 @@ async function startServer() {
 
   // ─── YouTube Channel Info (live from YouTube API) ─────────────────────────
   app.get("/api/youtube/channel-info", async (req, res) => {
-    const refreshToken = process.env.YOUTUBE_REFRESH_TOKEN;
-    if (!refreshToken) {
-      return res.status(401).json({ error: 'YouTube not connected', connected: false });
-    }
+    const uid = (req as any).uid as string;
+    const channelId = req.query.channelId as string | undefined;
+    let refreshToken: string;
+    try { refreshToken = await getRefreshTokenForChannel(uid, channelId); }
+    catch { return res.status(401).json({ error: 'YouTube not connected', connected: false }); }
     try {
       const channelClient = new google.auth.OAuth2(
         process.env.YOUTUBE_CLIENT_ID,
@@ -395,8 +415,11 @@ async function startServer() {
 
   // ─── YouTube Recent Videos ────────────────────────────────────────────────
   app.get("/api/youtube/recent-videos", async (req, res) => {
-    const refreshToken = process.env.YOUTUBE_REFRESH_TOKEN;
-    if (!refreshToken) return res.status(401).json({ error: 'YouTube not connected' });
+    const uid = (req as any).uid as string;
+    const channelId = req.query.channelId as string | undefined;
+    let refreshToken: string;
+    try { refreshToken = await getRefreshTokenForChannel(uid, channelId); }
+    catch { return res.status(401).json({ error: 'YouTube not connected' }); }
     try {
       const ytClient = new google.auth.OAuth2(process.env.YOUTUBE_CLIENT_ID, process.env.YOUTUBE_CLIENT_SECRET);
       ytClient.setCredentials({ refresh_token: refreshToken });
@@ -536,12 +559,12 @@ async function startServer() {
 
   // ─── YouTube Upload ───────────────────────────────────────────────────────
   app.post("/api/youtube/upload", async (req, res) => {
-    const { title, description, tags, videoUrl, videoBase64, privacyStatus = 'public', tokens: bodyTokens } = req.body;
+    const { title, description, tags, videoUrl, videoBase64, privacyStatus = 'public', tokens: bodyTokens, channelId: bodyChannelId } = req.body;
     if (!title) return res.status(400).json({ error: 'title is required' });
-    // Prefer token from request body (sent by frontend from Firestore user profile),
-    // fall back to the server-level env var.
-    const refreshToken = bodyTokens?.refresh_token || process.env.YOUTUBE_REFRESH_TOKEN;
-    if (!refreshToken) return res.status(401).json({ error: 'YouTube not connected. Set YOUTUBE_REFRESH_TOKEN or pass tokens in request body.' });
+    const uid = (req as any).uid as string;
+    let refreshToken: string;
+    try { refreshToken = bodyTokens?.refresh_token || await getRefreshTokenForChannel(uid, bodyChannelId); }
+    catch { return res.status(401).json({ error: 'YouTube not connected' }); }
     try {
       const uploadClient = new google.auth.OAuth2(process.env.YOUTUBE_CLIENT_ID, process.env.YOUTUBE_CLIENT_SECRET);
       uploadClient.setCredentials({ refresh_token: refreshToken });
@@ -1069,8 +1092,11 @@ async function startServer() {
 
   // ─── YouTube Analytics (revenue, views, RPM last 28 days) ─────────────────
   app.get("/api/youtube/analytics", async (req, res) => {
-    const refreshToken = process.env.YOUTUBE_REFRESH_TOKEN;
-    if (!refreshToken) return res.status(401).json({ error: 'YouTube not connected', connected: false });
+    const uid = (req as any).uid as string;
+    const channelId = req.query.channelId as string | undefined;
+    let refreshToken: string;
+    try { refreshToken = await getRefreshTokenForChannel(uid, channelId); }
+    catch { return res.status(401).json({ error: 'YouTube not connected', connected: false }); }
     try {
       const analyticsClient = new google.auth.OAuth2(
         process.env.YOUTUBE_CLIENT_ID,
@@ -1276,9 +1302,12 @@ async function startServer() {
   // ─── Competitor Intelligence endpoint ─────────────────────────────────────
   app.get("/api/youtube/competitors", async (req, res) => {
     const niche = (req.query.niche as string) || 'Tech & AI';
-    const refreshToken = process.env.YOUTUBE_REFRESH_TOKEN;
+    const uid = (req as any).uid as string;
+    const channelId = req.query.channelId as string | undefined;
     const clientId = process.env.YOUTUBE_CLIENT_ID;
     const clientSecret = process.env.YOUTUBE_CLIENT_SECRET;
+    let refreshToken: string | undefined;
+    try { refreshToken = await getRefreshTokenForChannel(uid, channelId); } catch { /* fall through to fallback */ }
 
     // Niche → search keyword mapping
     const nicheKeywords: Record<string, string> = {
@@ -1308,9 +1337,7 @@ async function startServer() {
     const gaps = contentGaps[niche] || ['Beginner guides', 'Case studies', 'Tool comparisons'];
 
     try {
-      if (!refreshToken || !clientId || !clientSecret) {
-        throw new Error('YouTube credentials not configured');
-      }
+      if (!refreshToken || !clientId || !clientSecret) throw new Error('YouTube credentials not configured');
       const compClient = new google.auth.OAuth2(clientId, clientSecret);
       compClient.setCredentials({ refresh_token: refreshToken });
       const youtube = google.youtube({ version: 'v3', auth: compClient });
@@ -1530,10 +1557,15 @@ Return ONLY valid JSON, no markdown:
     }
   });
 
-  // ─── Analytics Feedback Loop: top performers ──────────────────────────────────────────────────────────────────
+  // ─── Analytics Feedback Loop: top performers ─────────────────────────────
   app.get('/api/youtube/top-performers', requireAuth, async (req: Request, res: Response) => {
+    const uid = (req as any).uid as string;
+    const channelId = req.query.channelId as string | undefined;
     try {
-      const youtube = await getYouTubeClient();
+      const refreshToken = await getRefreshTokenForChannel(uid, channelId);
+      const perfClient = new google.auth.OAuth2(process.env.YOUTUBE_CLIENT_ID, process.env.YOUTUBE_CLIENT_SECRET);
+      perfClient.setCredentials({ refresh_token: refreshToken });
+      const youtube = google.youtube({ version: 'v3', auth: perfClient });
       const channelRes = await youtube.channels.list({ part: ['contentDetails', 'statistics'], mine: true });
       const channel = channelRes.data.items?.[0];
       if (!channel) return res.status(404).json({ error: 'No channel found' });
@@ -1622,6 +1654,73 @@ Return JSON:
     } catch (error: any) {
       console.error('Affiliate embed error:', error.message);
       res.status(500).json({ error: 'Affiliate embed generation failed' });
+    }
+  });
+
+  // ─── Channel Management endpoints ────────────────────────────────────────
+  // POST /api/channels/save — save a channel after OAuth, fetch its YouTube metadata
+  app.post('/api/channels/save', async (req: Request, res: Response) => {
+    const uid = (req as any).uid as string;
+    const { channelId, tokens } = req.body;
+    if (!channelId || typeof channelId !== 'string' || !/^[\w-]{1,100}$/.test(channelId)) {
+      return res.status(400).json({ error: 'Invalid channelId' });
+    }
+    if (!tokens?.refresh_token) return res.status(400).json({ error: 'tokens.refresh_token is required' });
+    try {
+      const saveClient = new google.auth.OAuth2(process.env.YOUTUBE_CLIENT_ID, process.env.YOUTUBE_CLIENT_SECRET);
+      saveClient.setCredentials({ refresh_token: tokens.refresh_token });
+      const yt = google.youtube({ version: 'v3', auth: saveClient });
+      const resp = await yt.channels.list({ part: ['snippet', 'statistics'], mine: true });
+      const ch = resp.data.items?.[0];
+      const channel = {
+        channelId,
+        channelName: ch?.snippet?.title || channelId,
+        youtubeChannelId: ch?.id || '',
+        youtubeChannelTitle: ch?.snippet?.title || '',
+        youtubeChannelThumbnail: ch?.snippet?.thumbnails?.default?.url || '',
+        youtubeTokens: tokens,
+        niche: req.body.niche || 'Tech & AI',
+        isActive: true,
+        totalVideosPublished: 0,
+        lastPublishedAt: null,
+      };
+      await admin.firestore().doc(`users/${uid}/channels/${channelId}`).set(
+        { ...channel, createdAt: admin.firestore.FieldValue.serverTimestamp() },
+        { merge: true }
+      );
+      res.json({ success: true, channel });
+    } catch (error: any) {
+      console.error('Channel save error:', error.message);
+      res.status(500).json({ error: 'Failed to save channel' });
+    }
+  });
+
+  // GET /api/channels/list — list all channels for the authenticated user
+  app.get('/api/channels/list', async (req: Request, res: Response) => {
+    const uid = (req as any).uid as string;
+    try {
+      const snap = await admin.firestore().collection(`users/${uid}/channels`).orderBy('createdAt', 'desc').get();
+      const channels = snap.docs.map(d => ({ channelId: d.id, ...d.data() }));
+      res.json({ channels });
+    } catch (error: any) {
+      console.error('Channel list error:', error.message);
+      res.status(500).json({ error: 'Failed to list channels' });
+    }
+  });
+
+  // DELETE /api/channels/:channelId — disconnect a channel
+  app.delete('/api/channels/:channelId', async (req: Request, res: Response) => {
+    const uid = (req as any).uid as string;
+    const { channelId } = req.params;
+    if (!channelId || !/^[\w-]{1,100}$/.test(channelId)) {
+      return res.status(400).json({ error: 'Invalid channelId' });
+    }
+    try {
+      await admin.firestore().doc(`users/${uid}/channels/${channelId}`).delete();
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error('Channel delete error:', error.message);
+      res.status(500).json({ error: 'Failed to delete channel' });
     }
   });
 

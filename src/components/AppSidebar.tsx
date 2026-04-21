@@ -1,18 +1,19 @@
 import { API_BASE_URL } from "../config/api";
 import { useState, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-import { 
-  Activity, LayoutDashboard, Film, Eye, Target, DollarSign, Brain, Settings, 
-  ChevronLeft, ChevronRight, HelpCircle, Youtube, Loader2, Shield, Rocket, Bell, Users, Search
+import {
+  Activity, LayoutDashboard, Film, Eye, Target, DollarSign, Brain, Settings,
+  ChevronLeft, ChevronRight, HelpCircle, Youtube, Loader2, Shield, Rocket, Bell, Users, Search,
+  ChevronDown, PlusCircle, Tv2
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { StatusIndicator } from "./dashboard/StatusIndicator";
 import { useAuth } from "./FirebaseProvider";
-import { doc, updateDoc } from "firebase/firestore";
-import { db } from "@/firebase";
+import { auth } from "@/firebase";
 import { toast } from "sonner";
 import { subscribeToLogs, AILog } from "@/services/firestoreService";
 import { NotificationsPanel } from "./NotificationsPanel";
+import { useChannel } from "@/context/ChannelContext";
 
 const navItems = [
   { id: "/", label: "Dashboard", icon: LayoutDashboard },
@@ -22,6 +23,7 @@ const navItems = [
   { id: "/revenue", label: "Revenue", icon: DollarSign },
   { id: "/ai-engine", label: "AI Engine", icon: Brain },
   { id: "/youtube-channel", label: "YouTube Channel", icon: Youtube },
+  { id: "/channels", label: "My Channels", icon: Tv2 },
   { id: "/strategy", label: "Strategy Intel", icon: Rocket },
   { id: "/competitors", label: "Competitor Intel", icon: Users },
   { id: "/keywords", label: "Keyword Research", icon: Search },
@@ -32,13 +34,14 @@ const navItems = [
 
 export const AppSidebar = () => {
   const [collapsed, setCollapsed] = useState(false);
-  const [connecting, setConnecting] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [showChannelMenu, setShowChannelMenu] = useState(false);
   const [logs, setLogs] = useState<AILog[]>([]);
   const [lastSeenCount, setLastSeenCount] = useState(0);
   const navigate = useNavigate();
   const location = useLocation();
-  const { profile, user } = useAuth();
+  const { user } = useAuth();
+  const { channels, activeChannel, setActiveChannelById } = useChannel();
 
   const unreadCount = Math.max(0, logs.length - lastSeenCount);
 
@@ -53,55 +56,33 @@ export const AppSidebar = () => {
   };
 
   useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
+    const handleMessage = async (event: MessageEvent) => {
       if (event.data?.type === 'YOUTUBE_AUTH_SUCCESS' && user) {
         const { tokens } = event.data;
-        updateDoc(doc(db, 'users', user.uid), {
-          youtubeConnected: true,
-          youtubeTokens: tokens,
-          youtubeChannelTitle: "Connected Channel", // Will be updated on first upload
-          updatedAt: new Date()
-        }).then(() => {
-          toast.success("YouTube Channel connected successfully!");
-        });
+        try {
+          const idToken = await auth.currentUser?.getIdToken();
+          const channelId = `ch_${Date.now()}`;
+          const res = await fetch(`${API_BASE_URL}/api/channels/save`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+            body: JSON.stringify({ channelId, tokens }),
+          });
+          if (res.ok) {
+            const data = await res.json();
+            setActiveChannelById(channelId);
+            toast.success(`Channel "${data.channel?.youtubeChannelTitle || 'New Channel'}" connected!`);
+          } else {
+            toast.error('Failed to save channel — check your credentials');
+          }
+        } catch {
+          toast.error('Failed to save channel');
+        }
       }
     };
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
   }, [user]);
 
-  const handleConnectYoutube = async () => {
-    if (!user) return;
-    setConnecting(true);
-    
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/auth/youtube/url`);
-      const data = await response.json();
-      
-      if (!response.ok) {
-        toast.error(data.details || data.error || "Failed to start YouTube connection");
-        return;
-      }
-
-      const { url } = data;
-      
-      const width = 600;
-      const height = 700;
-      const left = window.screenX + (window.outerWidth - width) / 2;
-      const top = window.screenY + (window.outerHeight - height) / 2;
-      
-      window.open(
-        url,
-        "youtube_auth",
-        `width=${width},height=${height},left=${left},top=${top}`
-      );
-    } catch (error) {
-      console.error("Failed to get auth URL:", error);
-      toast.error("Failed to start YouTube connection. Is the server running?");
-    } finally {
-      setConnecting(false);
-    }
-  };
 
   return (
     <aside className={cn(
@@ -164,48 +145,61 @@ export const AppSidebar = () => {
         })}
       </nav>
 
-      {/* Channel */}
+      {/* Channel Switcher */}
       {!collapsed && (
-        <div className="p-3 border-t border-border space-y-2">
-          <button 
-            onClick={handleConnectYoutube}
-            disabled={connecting || profile?.youtubeConnected}
-            className={cn(
-              "w-full flex items-center gap-2 rounded-md p-2 transition-colors text-left",
-              profile?.youtubeConnected ? "bg-success/10" : "bg-secondary/50 hover:bg-secondary"
-            )}
+        <div className="p-3 border-t border-border relative">
+          <button
+            onClick={() => setShowChannelMenu(v => !v)}
+            className="w-full flex items-center gap-2 rounded-md p-2 bg-secondary/50 hover:bg-secondary transition-colors text-left"
           >
-            {connecting ? (
-              <Loader2 className="h-4 w-4 animate-spin text-primary shrink-0" />
+            {activeChannel?.youtubeChannelThumbnail ? (
+              <img src={activeChannel.youtubeChannelThumbnail} className="h-6 w-6 rounded-full shrink-0 object-cover" alt="" />
             ) : (
-              <Youtube className={cn("h-4 w-4 shrink-0", profile?.youtubeConnected ? "text-success" : "text-destructive")} />
+              <Youtube className="h-4 w-4 shrink-0 text-destructive" />
             )}
             <div className="min-w-0 flex-1">
               <p className="text-[10px] font-mono text-foreground truncate">
-                {profile?.youtubeConnected ? profile.youtubeChannelTitle : "Not Connected"}
+                {activeChannel?.youtubeChannelTitle || 'No Channel Connected'}
               </p>
-              <p className="text-[9px] font-mono text-muted-foreground">
-                {profile?.youtubeConnected ? "Live & Syncing" : "Setup required"}
+              <p className="text-[9px] font-mono text-muted-foreground truncate">
+                {activeChannel?.niche || 'Connect a channel'}
               </p>
             </div>
+            <ChevronDown className="h-3 w-3 text-muted-foreground shrink-0" />
           </button>
-          
-          {profile?.youtubeConnected && (
-            <button
-              onClick={() => {
-                // Reset connection to allow re-sync
-                if (!user) return;
-                updateDoc(doc(db, 'users', user.uid), {
-                  youtubeConnected: false
-                }).then(() => {
-                  toast.info("Connection reset. Click to re-sync with updated ID.");
-                });
-              }}
-              className="w-full flex items-center justify-center gap-2 py-1.5 border border-border rounded text-[9px] font-mono text-muted-foreground hover:bg-secondary transition-colors"
-            >
-              <Activity className="h-3 w-3" />
-              REFRESH CONNECTION
-            </button>
+
+          {showChannelMenu && (
+            <div className="absolute bottom-full left-3 right-3 mb-1 bg-card border border-border rounded-md shadow-lg z-50 py-1">
+              {channels.map(ch => (
+                <button
+                  key={ch.channelId}
+                  onClick={() => { setActiveChannelById(ch.channelId); setShowChannelMenu(false); }}
+                  className={cn(
+                    "w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-secondary transition-colors",
+                    ch.channelId === activeChannel?.channelId && "bg-primary/10"
+                  )}
+                >
+                  {ch.youtubeChannelThumbnail ? (
+                    <img src={ch.youtubeChannelThumbnail} className="h-5 w-5 rounded-full shrink-0 object-cover" alt="" />
+                  ) : (
+                    <Youtube className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  )}
+                  <span className="text-[10px] font-mono truncate flex-1">{ch.youtubeChannelTitle || ch.channelId}</span>
+                  {ch.channelId === activeChannel?.channelId && (
+                    <span className="text-[8px] text-primary font-mono">ACTIVE</span>
+                  )}
+                </button>
+              ))}
+              <div className="border-t border-border mt-1 pt-1">
+                <button
+                  onClick={() => { navigate('/channels'); setShowChannelMenu(false); }}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-secondary transition-colors"
+                >
+                  <PlusCircle className="h-4 w-4 text-primary shrink-0" />
+                  <span className="text-[10px] font-mono text-primary">Add Channel</span>
+                </button>
+              </div>
+            </div>
           )}
         </div>
       )}
