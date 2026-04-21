@@ -35,6 +35,56 @@ let schedulerState: SchedulerState = {
 };
 let schedulerTimer: ReturnType<typeof setTimeout> | null = null;
 
+// Shared scan function used by both the automatic timer and the manual run-now endpoint
+async function runScheduledScan(niche: string): Promise<void> {
+  const nicheTermMap: Record<string, string> = {
+    'Tech & AI': 'artificial intelligence 2026',
+    'Finance & Crypto': 'cryptocurrency investing 2026',
+    'Health & Wellness': 'health tips 2026',
+    'Home & DIY': 'home improvement DIY 2026',
+    'Personal Development': 'self improvement 2026',
+  };
+  const searchTerm = nicheTermMap[niche] || niche;
+  const serpApiKey = process.env.SERP_API_KEY;
+  let trends: any[] = [];
+
+  if (serpApiKey) {
+    try {
+      const serpUrl = `https://serpapi.com/search.json?engine=google_trends&q=${encodeURIComponent(searchTerm)}&api_key=${serpApiKey}`;
+      const serpRes = await axios.get(serpUrl, { timeout: 10000 });
+      const timelineData = serpRes.data?.interest_over_time?.timeline_data || [];
+      trends = timelineData.slice(-3).map((point: any, i: number) => ({
+        topic: `${searchTerm} — ${point.date || `Week ${i + 1}`}`,
+        score: Math.min(99, point.values?.[0]?.extracted_value || 50),
+        niche,
+        scannedAt: new Date().toISOString(),
+      }));
+      console.log(`[Scheduler] SerpAPI scan for "${niche}" returned ${trends.length} trends`);
+    } catch (serpErr: any) {
+      console.warn(`[Scheduler] SerpAPI failed for "${niche}", falling back to Gemini:`, serpErr.message);
+    }
+  }
+
+  // Gemini fallback if SerpAPI unavailable or returned nothing
+  if (trends.length === 0) {
+    const aiResult = await callStrategyAI(
+      `List 3 trending YouTube video topics for the "${niche}" niche right now in 2026. Return ONLY a JSON array: [{"topic": "...", "score": 85}]`
+    );
+    try {
+      const match = aiResult.replace(/```json/gi, '').replace(/```/g, '').trim().match(/\[[\s\S]*\]/);
+      if (match) trends = JSON.parse(match[0]).map((t: any) => ({ ...t, niche, scannedAt: new Date().toISOString() }));
+    } catch { /* ignore parse errors */ }
+    console.log(`[Scheduler] Gemini fallback for "${niche}" returned ${trends.length} trends`);
+  }
+
+  // Store in pendingTrends queue (bounded to 50)
+  if (!(schedulerState as any).pendingTrends) (schedulerState as any).pendingTrends = [];
+  (schedulerState as any).pendingTrends.push(...trends);
+  if ((schedulerState as any).pendingTrends.length > 50) {
+    (schedulerState as any).pendingTrends = (schedulerState as any).pendingTrends.slice(-50);
+  }
+}
+
 function scheduleNextRun() {
   if (schedulerTimer) clearTimeout(schedulerTimer);
   if (!schedulerState.enabled) return;
@@ -43,14 +93,13 @@ function scheduleNextRun() {
   schedulerTimer = setTimeout(async () => {
     schedulerState.lastRunAt = new Date().toISOString();
     schedulerState.runCount++;
-    console.log(`[Scheduler] Auto-scan #${schedulerState.runCount} triggered at ${schedulerState.lastRunAt}`);
-    // Log to Firestore via Gemini scan (niches rotate)
+    // Rotate through configured niches on each auto-run
     const niche = schedulerState.niches[(schedulerState.runCount - 1) % schedulerState.niches.length];
+    console.log(`[Scheduler] Auto-scan #${schedulerState.runCount} for "${niche}" at ${schedulerState.lastRunAt}`);
     try {
-      await callStrategyAI(`List 5 trending YouTube video topics for the niche: ${niche}. Return JSON array of strings only.`);
-      console.log(`[Scheduler] Scan for ${niche} complete`);
+      await runScheduledScan(niche);
     } catch (e) {
-      console.error('[Scheduler] Scan failed:', e);
+      console.error('[Scheduler] Auto-scan failed:', e);
     }
     scheduleNextRun();
   }, ms);
@@ -936,51 +985,12 @@ async function startServer() {
     const niche = req.body.niche || schedulerState.niches[0];
     schedulerState.lastRunAt = new Date().toISOString();
     schedulerState.runCount++;
-
-    // Trigger a real trend scan and store results in pendingTrends
+    // Use the shared scan function — same logic as the automatic timer
     try {
-      const serpApiKey = process.env.SERP_API_KEY;
-      const nicheTermMap: Record<string, string> = {
-        'Tech & AI': 'artificial intelligence 2026',
-        'Finance & Crypto': 'cryptocurrency investing 2026',
-        'Health & Wellness': 'health tips 2026',
-        'Home & DIY': 'home improvement DIY 2026',
-        'Personal Development': 'self improvement 2026',
-      };
-      const searchTerm = nicheTermMap[niche] || niche;
-
-      let trends: any[] = [];
-      if (serpApiKey) {
-        const serpUrl = `https://serpapi.com/search.json?engine=google_trends&q=${encodeURIComponent(searchTerm)}&api_key=${serpApiKey}`;
-        const serpRes = await axios.get(serpUrl, { timeout: 10000 });
-        const timelineData = serpRes.data?.interest_over_time?.timeline_data || [];
-        trends = timelineData.slice(-3).map((point: any, i: number) => ({
-          topic: `${searchTerm} — ${point.date || `Week ${i + 1}`}`,
-          score: Math.min(99, point.values?.[0]?.extracted_value || 50),
-          niche,
-          scannedAt: new Date().toISOString(),
-        }));
-      } else {
-        // Gemini fallback
-        const aiResult = await callStrategyAI(
-          `List 3 trending YouTube video topics for the "${niche}" niche right now in 2026. Return ONLY a JSON array: [{"topic": "...", "score": 85}]`
-        );
-        try {
-          const match = aiResult.replace(/```json/gi, '').replace(/```/g, '').trim().match(/\[[\s\S]*\]/);
-          if (match) trends = JSON.parse(match[0]).map((t: any) => ({ ...t, niche, scannedAt: new Date().toISOString() }));
-        } catch { /* ignore parse errors */ }
-      }
-
-      if (!(schedulerState as any).pendingTrends) (schedulerState as any).pendingTrends = [];
-      (schedulerState as any).pendingTrends.push(...trends);
-      // Keep queue bounded to last 50 trends
-      if ((schedulerState as any).pendingTrends.length > 50) {
-        (schedulerState as any).pendingTrends = (schedulerState as any).pendingTrends.slice(-50);
-      }
+      await runScheduledScan(niche);
     } catch (scanErr: any) {
-      console.warn('Scheduler scan error:', scanErr.message);
+      console.warn('[Scheduler] Manual scan error:', scanErr.message);
     }
-
     res.json({ success: true, message: `Scan triggered for: ${niche}`, runCount: schedulerState.runCount });
   });
 
