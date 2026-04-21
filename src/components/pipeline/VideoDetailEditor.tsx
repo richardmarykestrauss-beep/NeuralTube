@@ -5,13 +5,13 @@ import {
   FileText, Mic, Film, Image, Tags, Eye, 
   RefreshCw, Copy, Wand2, Volume2,
   CheckCircle2, AlertTriangle, Loader2, ArrowLeft, Upload,
-  Trophy, BarChart2, FlipHorizontal
+  Trophy, BarChart2, FlipHorizontal, Scissors, DollarSign
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { generateVideoScript } from "@/services/geminiService";
 import { subscribeToVideos, Video, updateVideoStage } from "@/services/firestoreService";
 import { doc, updateDoc } from "firebase/firestore";
-import { db } from "@/firebase";
+import { db, auth } from "@/firebase";
 import { API_BASE_URL } from "@/config/api";
 import { toast } from "sonner";
 
@@ -27,6 +27,10 @@ export const VideoDetailEditor = () => {
   const [isRegenerating, setIsRegenerating] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [isGeneratingAB, setIsGeneratingAB] = useState(false);
+  const [isGeneratingShort, setIsGeneratingShort] = useState(false);
+  const [shortVideoUrl, setShortVideoUrl] = useState<string | null>(null);
+  const [isEmbeddingAffiliate, setIsEmbeddingAffiliate] = useState(false);
+  const [affiliateResult, setAffiliateResult] = useState<any>(null);
 
   // Subscribe to all videos, pick the one matching videoId (or first in queue)
   useEffect(() => {
@@ -262,7 +266,66 @@ export const VideoDetailEditor = () => {
                     <Copy className="h-3 w-3" /> Copy
                   </button>
                 )}
+                {script && (
+                  <button
+                    onClick={async () => {
+                      setIsEmbeddingAffiliate(true);
+                      try {
+                        // auth already statically imported
+                        const user = auth.currentUser;
+                        if (!user) throw new Error('Not signed in');
+                        const idToken = await user.getIdToken();
+                        const fullScript = `${script.hook}\n\n${script.body}\n\n${script.outro}`;
+                        const res = await fetch(`${API_BASE_URL}/api/strategy/affiliate-embed`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+                          body: JSON.stringify({ script: fullScript, niche: video.niche, title: video.title })
+                        });
+                        if (!res.ok) throw new Error('Affiliate embed failed');
+                        const data = await res.json();
+                        setAffiliateResult(data);
+                        toast.success(`${data.insertions?.length || 0} affiliate mentions embedded!`);
+                      } catch (err: any) {
+                        toast.error(err.message || 'Affiliate embed failed');
+                      } finally {
+                        setIsEmbeddingAffiliate(false);
+                      }
+                    }}
+                    disabled={isEmbeddingAffiliate}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-yellow-600/20 border border-yellow-500/30 text-yellow-400 text-xs font-mono hover:bg-yellow-600/30 transition-colors disabled:opacity-50"
+                  >
+                    {isEmbeddingAffiliate ? <Loader2 className="h-3 w-3 animate-spin" /> : <DollarSign className="h-3 w-3" />}
+                    {isEmbeddingAffiliate ? 'Embedding...' : 'Embed Affiliates'}
+                  </button>
+                )}
               </div>
+              {affiliateResult && (
+                <div className="mt-4 p-4 bg-yellow-900/10 border border-yellow-500/20 rounded-lg space-y-3">
+                  <div className="flex items-center justify-between">
+                    <p className="text-[10px] font-mono uppercase text-yellow-400">Affiliate Insertions</p>
+                    <span className="text-[10px] font-mono text-muted-foreground">{affiliateResult.estimatedMonthlyRevenue}</span>
+                  </div>
+                  {(affiliateResult.insertions || []).map((ins: any, i: number) => (
+                    <div key={i} className="bg-secondary/20 rounded p-3 space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-mono px-1.5 py-0.5 bg-yellow-600/20 text-yellow-400 rounded uppercase">{ins.position}</span>
+                        <span className="text-xs font-mono font-bold">{ins.product}</span>
+                        <span className="text-[10px] text-muted-foreground">{ins.estimatedCommission}</span>
+                      </div>
+                      <p className="text-[11px] text-muted-foreground line-through">{ins.originalText}</p>
+                      <p className="text-[11px] text-foreground/80">{ins.rewrittenText}</p>
+                    </div>
+                  ))}
+                  {affiliateResult.rewrittenScript && (
+                    <button
+                      onClick={() => navigator.clipboard.writeText(affiliateResult.rewrittenScript)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-secondary text-xs font-mono text-muted-foreground hover:text-foreground transition-colors w-full justify-center"
+                    >
+                      <Copy className="h-3 w-3" /> Copy Affiliate Script
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
             <div className="p-4 space-y-4">
               <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">VIDEO INFO</p>
@@ -565,6 +628,58 @@ export const VideoDetailEditor = () => {
                   {isUploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
                   {isUploading ? "UPLOADING..." : "UPLOAD TO YOUTUBE"}
                 </button>
+              )}
+              {video.script && !shortVideoUrl && (
+                <button
+                  onClick={async () => {
+                    setIsGeneratingShort(true);
+                    try {
+                      // auth already statically imported
+                      const user = auth.currentUser;
+                      if (!user) throw new Error('Not signed in');
+                      const idToken = await user.getIdToken();
+                      const shortsRes = await fetch(`${API_BASE_URL}/api/strategy/shorts`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+                        body: JSON.stringify({ script: video.script, title: video.title, niche: video.niche })
+                      });
+                      const shortsData = await shortsRes.json();
+                      const firstShort = shortsData?.shorts?.[0];
+                      if (!firstShort) throw new Error('No Short script generated');
+                      const assembleRes = await fetch(`${API_BASE_URL}/api/video/assemble-short`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+                        body: JSON.stringify({ shortsScript: firstShort.shortsScript, title: firstShort.title || video.title, niche: video.niche, videoId: video.id })
+                      });
+                      const assembleData = await assembleRes.json();
+                      if (!assembleData.success) throw new Error(assembleData.error || 'Short assembly failed');
+                      const url = assembleData.videoUrl || assembleData.videoBase64;
+                      setShortVideoUrl(url);
+                      if (video.id) {
+                        await updateDoc(doc(db, 'videos', video.id), { shortVideoUrl: assembleData.videoUrl || null, shortGeneratedAt: new Date() });
+                      }
+                      toast.success('YouTube Short generated! 9:16 vertical format ready.');
+                    } catch (err: any) {
+                      toast.error(err.message || 'Short generation failed');
+                    } finally {
+                      setIsGeneratingShort(false);
+                    }
+                  }}
+                  disabled={isGeneratingShort}
+                  className="flex items-center gap-2 px-4 py-3 rounded-lg bg-purple-600/20 border border-purple-500/30 text-purple-400 text-sm font-mono font-bold justify-center hover:bg-purple-600/30 transition-colors disabled:opacity-50"
+                >
+                  {isGeneratingShort ? <Loader2 className="h-4 w-4 animate-spin" /> : <Scissors className="h-4 w-4" />}
+                  {isGeneratingShort ? 'GENERATING SHORT...' : 'GENERATE SHORT'}
+                </button>
+              )}
+              {shortVideoUrl && (
+                <a
+                  href={shortVideoUrl.startsWith('http') ? shortVideoUrl : `data:video/mp4;base64,${shortVideoUrl}`}
+                  download={`${video.title || 'short'}_vertical.mp4`}
+                  className="flex items-center gap-2 px-4 py-3 rounded-lg bg-green-600/20 border border-green-500/30 text-green-400 text-sm font-mono font-bold justify-center hover:bg-green-600/30 transition-colors"
+                >
+                  <CheckCircle2 className="h-4 w-4" /> DOWNLOAD SHORT (9:16)
+                </a>
               )}
             </div>
           </div>

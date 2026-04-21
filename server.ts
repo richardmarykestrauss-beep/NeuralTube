@@ -388,7 +388,8 @@ async function startServer() {
       });
     } catch (error: any) {
       console.error('YouTube channel info error:', error);
-      res.status(500).json({ error: 'Failed to fetch channel info', details: error.message, connected: false });
+      console.error('YouTube channel info error details:', error.message);
+      res.status(500).json({ error: 'Failed to fetch channel info', connected: false });
     }
   });
 
@@ -424,7 +425,8 @@ async function startServer() {
       })) || [];
       res.json({ videos });
     } catch (error: any) {
-      res.status(500).json({ error: 'Failed to fetch videos', details: error.message });
+      console.error('YouTube videos error details:', error.message);
+      res.status(500).json({ error: 'Failed to fetch videos' });
     }
   });
 
@@ -478,7 +480,8 @@ async function startServer() {
     } catch (error: any) {
       console.error('TTS Error:', error);
       // Don't block the pipeline — return a soft failure
-      res.json({ url: null, note: error.message, success: false });
+      console.error('TTS error details:', error.message);
+      res.json({ url: null, note: 'TTS generation failed', success: false });
     }
   });
 
@@ -526,7 +529,8 @@ async function startServer() {
       console.error('Thumbnail Error:', error);
       // Don't block pipeline — return a placeholder
       const encodedTitle = encodeURIComponent(title.substring(0, 40));
-      res.json({ url: `https://placehold.co/1280x720/FF4500/ffffff?text=${encodedTitle}`, success: false, note: error.message });
+      console.error('Thumbnail error details:', error.message);
+      res.json({ url: `https://placehold.co/1280x720/FF4500/ffffff?text=${encodedTitle}`, success: false, note: 'Thumbnail generation failed' });
     }
   });
 
@@ -569,7 +573,8 @@ async function startServer() {
       });
     } catch (error: any) {
       console.error('YouTube upload error:', error);
-      res.status(500).json({ error: 'Upload failed', details: error.message });
+      console.error('YouTube upload error details:', error.message);
+      res.status(500).json({ error: 'Upload failed' });
     }
   });
 
@@ -657,7 +662,8 @@ async function startServer() {
       res.json({ text, type });
     } catch (error) {
       console.error("AI Generate Error:", error);
-      res.status(500).json({ error: "AI Generation failed", details: error instanceof Error ? error.message : "Unknown error" });
+      console.error('AI generation error details:', error instanceof Error ? error.message : error);
+      res.status(500).json({ error: 'AI generation failed' });
     }
   });
 
@@ -673,7 +679,8 @@ async function startServer() {
       res.json({ hooks, topic, niche });
     } catch (error) {
       console.error("Hook Generator Error:", error);
-      res.status(500).json({ error: "Hook generation failed", details: error instanceof Error ? error.message : "Unknown" });
+      console.error('Hook generation error details:', error instanceof Error ? error.message : error);
+      res.status(500).json({ error: 'Hook generation failed' });
     }
   });
 
@@ -690,7 +697,8 @@ async function startServer() {
       res.json(data);
     } catch (error) {
       console.error("Humanizer Error:", error);
-      res.status(500).json({ error: "Humanization failed", details: error instanceof Error ? error.message : "Unknown" });
+      console.error('Humanization error details:', error instanceof Error ? error.message : error);
+      res.status(500).json({ error: 'Humanization failed' });
     }
   });
 
@@ -707,7 +715,8 @@ async function startServer() {
       res.json({ shorts, sourceTitle: title });
     } catch (error) {
       console.error("Shorts Extractor Error:", error);
-      res.status(500).json({ error: "Shorts extraction failed", details: error instanceof Error ? error.message : "Unknown" });
+      console.error('Shorts extraction error details:', error instanceof Error ? error.message : error);
+      res.status(500).json({ error: 'Shorts extraction failed' });
     }
   });
 
@@ -723,7 +732,8 @@ async function startServer() {
       res.json(data);
     } catch (error) {
       console.error("Monetization Advisor Error:", error);
-      res.status(500).json({ error: "Monetization analysis failed", details: error instanceof Error ? error.message : "Unknown" });
+      console.error('Monetization analysis error details:', error instanceof Error ? error.message : error);
+      res.status(500).json({ error: 'Monetization analysis failed' });
     }
   });
 
@@ -739,7 +749,8 @@ async function startServer() {
       res.json(data);
     } catch (error) {
       console.error("Title Optimizer Error:", error);
-      res.status(500).json({ error: "Title optimization failed", details: error instanceof Error ? error.message : "Unknown" });
+      console.error('Title optimization error details:', error instanceof Error ? error.message : error);
+      res.status(500).json({ error: 'Title optimization failed' });
     }
   });
 
@@ -945,6 +956,117 @@ async function startServer() {
     }
   });
 
+  // ─── Shorts Auto-Publisher (vertical 9:16 format) ────────────────────────
+  app.post('/api/video/assemble-short', async (req: Request, res: Response) => {
+    const uid = (req as any).uid;
+    const { shortsScript, title, niche, audioBase64, videoId } = req.body || {};
+    if (!shortsScript || typeof shortsScript !== 'string') return res.status(400).json({ error: 'shortsScript is required' });
+    if (!title || typeof title !== 'string') return res.status(400).json({ error: 'title is required' });
+    // Check server-side video rate limit
+    const today = new Date().toISOString().split('T')[0];
+    const rlKey = `${uid}:${today}`;
+    const rl = rateLimitStore.get(rlKey) || { videoCount: 0, serpCount: 0 };
+    if (rl.videoCount >= 3) return res.status(429).json({ error: 'Daily video limit reached (3/day on free tier). Try again tomorrow.' });
+    const tmpDir = `/tmp/short_${uid}_${Date.now()}`;
+    fs.mkdirSync(tmpDir, { recursive: true });
+    try {
+      const pexelsKey = process.env.PEXELS_API_KEY;
+      const keywords = title.split(' ').filter((w: string) => w.length > 4).slice(0, 3);
+      const imagePaths: string[] = [];
+      // Fetch 6 portrait images (for 9:16 vertical format)
+      for (let i = 0; i < 6; i++) {
+        const query = keywords[i % keywords.length] || 'motivation';
+        const imgPath = `${tmpDir}/img_${i}.jpg`;
+        if (pexelsKey) {
+          try {
+            const pRes = await fetch(`https://api.pexels.com/v1/search?query=${encodeURIComponent(query)}&per_page=3&page=${i + 1}&orientation=portrait`, { headers: { Authorization: pexelsKey } });
+            const pData = await pRes.json() as any;
+            const photoUrl = pData?.photos?.[0]?.src?.portrait || pData?.photos?.[0]?.src?.medium;
+            if (photoUrl) {
+              const imgRes = await fetch(photoUrl);
+              const imgBuf = await imgRes.arrayBuffer();
+              fs.writeFileSync(imgPath, Buffer.from(imgBuf));
+              imagePaths.push(imgPath);
+              continue;
+            }
+          } catch { /* fall through to placeholder */ }
+        }
+        // Placeholder vertical image
+        const fallbackPath = `${tmpDir}/placeholder_${i}.jpg`;
+        try {
+          await execAsync(`ffmpeg -f lavfi -i color=c=#1a0a2e:size=720x1280:duration=1 -vframes 1 "${fallbackPath}" -y`);
+          if (fs.existsSync(fallbackPath)) imagePaths.push(fallbackPath);
+        } catch { /* skip */ }
+      }
+      if (imagePaths.length === 0) throw new Error('No images available for Shorts assembly');
+      // Write audio if provided
+      let audioPath: string | null = null;
+      if (audioBase64) {
+        audioPath = `${tmpDir}/audio.mp3`;
+        fs.writeFileSync(audioPath, Buffer.from(audioBase64, 'base64'));
+      }
+      // Build concat list — 5s per image for a ~30s Short
+      const secPerImage = Math.max(3, Math.floor(30 / imagePaths.length));
+      const concatListPath = `${tmpDir}/concat.txt`;
+      const concatLines = imagePaths.map((p: string) => `file '${p}'\nduration ${secPerImage}`).join('\n');
+      fs.writeFileSync(concatListPath, concatLines + '\n');
+      const outputPath = `${tmpDir}/short_output.mp4`;
+      // 9:16 vertical format (720x1280) for YouTube Shorts
+      let ffmpegCmd: string;
+      if (audioPath && fs.existsSync(audioPath)) {
+        ffmpegCmd = [
+          'ffmpeg -y',
+          `-f concat -safe 0 -i "${concatListPath}"`,
+          `-i "${audioPath}"`,
+          '-c:v libx264 -preset fast -crf 23 -pix_fmt yuv420p',
+          '-c:a aac -b:a 128k',
+          '-vf "scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2,setsar=1"',
+          '-shortest',
+          `"${outputPath}"`
+        ].join(' ');
+      } else {
+        ffmpegCmd = [
+          'ffmpeg -y',
+          `-f concat -safe 0 -i "${concatListPath}"`,
+          '-c:v libx264 -preset fast -crf 23 -pix_fmt yuv420p',
+          '-vf "scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2,setsar=1"',
+          '-r 30',
+          `"${outputPath}"`
+        ].join(' ');
+      }
+      await execAsync(ffmpegCmd, { timeout: 90000 });
+      if (!fs.existsSync(outputPath)) throw new Error('FFmpeg did not produce Shorts output file');
+      const stats = fs.statSync(outputPath);
+      // Upload to Cloud Storage under shorts/ prefix
+      const { Storage } = await import('@google-cloud/storage');
+      const storage = new Storage();
+      const bucketName = process.env.GCS_BUCKET_NAME || `${process.env.GOOGLE_CLOUD_PROJECT || 'neuraltube-app'}-videos`;
+      const destFileName = `shorts/${uid}/${Date.now()}_short.mp4`;
+      let videoUrl = '';
+      try {
+        await storage.bucket(bucketName).upload(outputPath, { destination: destFileName, metadata: { contentType: 'video/mp4' } });
+        await storage.bucket(bucketName).file(destFileName).makePublic();
+        videoUrl = `https://storage.googleapis.com/${bucketName}/${destFileName}`;
+      } catch (gcsErr: any) {
+        console.warn('[GCS] Shorts upload failed:', gcsErr.message);
+        if (stats.size < 900_000) {
+          const videoBase64 = fs.readFileSync(outputPath).toString('base64');
+          try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
+          incrementVideoCount(uid);
+          return res.json({ success: true, videoBase64, format: '9:16', fileSizeBytes: stats.size, durationSec: secPerImage * imagePaths.length, storageMethod: 'base64_fallback' });
+        }
+        throw new Error('GCS upload failed for Short');
+      }
+      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
+      incrementVideoCount(uid);
+      res.json({ success: true, videoUrl, format: '9:16', fileSizeBytes: stats.size, durationSec: secPerImage * imagePaths.length, hasAudio: !!audioPath, storageMethod: 'cloud_storage', parentVideoId: videoId || null });
+    } catch (error: any) {
+      console.error('Shorts assembly error:', error);
+      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
+      res.status(500).json({ error: 'Shorts assembly failed' });
+    }
+  });
+
   // ─── YouTube Analytics (revenue, views, RPM last 28 days) ─────────────────
   app.get("/api/youtube/analytics", async (req, res) => {
     const refreshToken = process.env.YOUTUBE_REFRESH_TOKEN;
@@ -1032,7 +1154,8 @@ async function startServer() {
       });
     } catch (error: any) {
       console.error('YouTube analytics error:', error);
-      res.status(500).json({ error: 'Failed to fetch analytics', details: error.message });
+      console.error('Analytics error details:', error.message);
+      res.status(500).json({ error: 'Failed to fetch analytics' });
     }
   });
 
@@ -1257,7 +1380,7 @@ async function startServer() {
         fetchedAt: new Date().toISOString(),
         source: 'fallback',
         isFallback: true,
-        fallbackReason: error.message?.slice(0, 200) || 'YouTube API unavailable'
+        fallbackReason: 'YouTube API unavailable'
       });
     }
   });
@@ -1347,6 +1470,158 @@ Return ONLY a valid JSON object with this exact structure (no markdown, no expla
     } catch (error: any) {
       console.error('Code audit error:', error.message);
       res.status(500).json({ error: 'Code audit failed' });
+    }
+  });
+
+  // ─── Keyword Research Engine ─────────────────────────────────────────────
+  app.post('/api/strategy/keyword-research', async (req: Request, res: Response) => {
+    const { niche, channelSize = 'new' } = req.body || {};
+    if (!niche || typeof niche !== 'string') return res.status(400).json({ error: 'niche is required' });
+    if (niche.length > 100) return res.status(400).json({ error: 'niche must be 100 characters or fewer' });
+    const validSizes = ['new', 'growing', 'established'];
+    if (!validSizes.includes(channelSize)) return res.status(400).json({ error: 'channelSize must be new, growing, or established' });
+    try {
+      const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+      if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY not configured');
+      const channelContext = channelSize === 'new'
+        ? 'a brand new channel with 0 subscribers — focus on ultra-low competition niches'
+        : channelSize === 'growing'
+        ? 'a growing channel with 1K-10K subscribers — balance competition vs volume'
+        : 'an established channel with 10K+ subscribers — can target higher competition';
+      const prompt = `You are a YouTube SEO specialist. Generate exactly 20 long-tail YouTube search queries for the niche: "${niche}".
+
+Channel context: ${channelContext}
+
+Each keyword MUST meet ALL of these criteria:
+1. Clear search intent — viewer knows exactly what they want to learn
+2. Low competition — fewer than 50,000 results when the query is searched in quotes on YouTube
+3. High RPM potential — topic attracts advertisers willing to pay $8+ CPM
+4. Evergreen — not tied to a news event, will drive traffic for 2+ years
+5. Faceless-friendly — can be covered without showing a face on camera
+
+Return ONLY valid JSON, no markdown:
+{
+  "keywords": [
+    {
+      "query": "exact search query string",
+      "estimatedMonthlySearches": "1K-5K",
+      "competitionLevel": "low" | "medium" | "high",
+      "rpmPotential": "$8-12",
+      "videoAngle": "specific angle/hook for this keyword",
+      "thumbnailConcept": "thumbnail visual concept in 10 words"
+    }
+  ]
+}`;
+      const aiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0.7, maxOutputTokens: 4096 } })
+      });
+      if (!aiRes.ok) throw new Error(`Gemini API error ${aiRes.status}`);
+      const aiData = await aiRes.json() as any;
+      let text = aiData?.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
+      text = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+      let result;
+      try { result = JSON.parse(text); } catch { result = { keywords: [] }; }
+      res.json({ ...result, niche, channelSize });
+    } catch (error: any) {
+      console.error('Keyword research error details:', error.message);
+      res.status(500).json({ error: 'Keyword research failed' });
+    }
+  });
+
+  // ─── Analytics Feedback Loop: top performers ──────────────────────────────────────────────────────────────────
+  app.get('/api/youtube/top-performers', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const youtube = await getYouTubeClient();
+      const channelRes = await youtube.channels.list({ part: ['contentDetails', 'statistics'], mine: true });
+      const channel = channelRes.data.items?.[0];
+      if (!channel) return res.status(404).json({ error: 'No channel found' });
+      const uploadsPlaylistId = channel.contentDetails?.relatedPlaylists?.uploads;
+      if (!uploadsPlaylistId) return res.json({ topPerformers: [], insights: [] });
+      const playlistRes = await youtube.playlistItems.list({ part: ['contentDetails'], playlistId: uploadsPlaylistId, maxResults: 50 });
+      const videoIds = (playlistRes.data.items || []).map((i: any) => i.contentDetails?.videoId).filter(Boolean);
+      if (!videoIds.length) return res.json({ topPerformers: [], insights: [] });
+      const statsRes = await youtube.videos.list({ part: ['statistics', 'snippet'], id: videoIds });
+      const videos = (statsRes.data.items || []).map((v: any) => ({
+        videoId: v.id,
+        title: v.snippet?.title,
+        publishedAt: v.snippet?.publishedAt,
+        views: parseInt(v.statistics?.viewCount || '0'),
+        likes: parseInt(v.statistics?.likeCount || '0'),
+        comments: parseInt(v.statistics?.commentCount || '0'),
+        thumbnail: v.snippet?.thumbnails?.medium?.url
+      }));
+      const sorted = videos.sort((a: any, b: any) => b.views - a.views);
+      const topPerformers = sorted.slice(0, 5);
+      const avgViews = videos.length ? Math.round(videos.reduce((s: number, v: any) => s + v.views, 0) / videos.length) : 0;
+      let insights: any[] = [];
+      if (topPerformers.length > 0) {
+        const topTitles = topPerformers.map((v: any) => v.title).join('\n');
+        const insightPrompt = `You are a YouTube growth strategist. Based on these top-performing video titles:\n${topTitles}\n\nIdentify 3 specific content patterns that explain their success. Return JSON array only: [{"pattern": string, "recommendation": string, "confidence": "high"|"medium"|"low"}]`;
+        try {
+          const insightRes = await callStrategyAI(insightPrompt);
+          const match = insightRes.match(/\[.*\]/s);
+          if (match) insights = JSON.parse(match[0]);
+        } catch (_) { insights = []; }
+      }
+      res.json({ topPerformers, avgViews, totalVideos: videos.length, insights });
+    } catch (error: any) {
+      console.error('Top performers error:', error.message);
+      res.status(500).json({ error: 'Failed to fetch top performers' });
+    }
+  });
+
+  // ─── Affiliate Script Integration ───────────────────────────────────────────────────────────────────
+  app.post('/api/strategy/affiliate-embed', requireAuth, async (req: Request, res: Response) => {
+    const { script, niche, title } = req.body || {};
+    if (!script || typeof script !== 'string') return res.status(400).json({ error: 'script is required' });
+    if (script.length > 8000) return res.status(400).json({ error: 'script too long (max 8000 chars)' });
+    const nicheStr = (niche || 'General').slice(0, 100);
+    const titleStr = (title || 'this video').slice(0, 200);
+    const prompt = `You are an affiliate marketing expert specialising in YouTube content monetisation.
+
+Video title: "${titleStr}"
+Niche: ${nicheStr}
+
+Here is the video script:
+---
+${script.slice(0, 4000)}
+---
+
+Your task:
+1. Identify the 3 best natural insertion points in the script where an affiliate mention would feel organic (not forced).
+2. For each insertion point, suggest a specific affiliate product/service that genuinely helps the viewer.
+3. Rewrite ONLY the sentence around each insertion point to include a natural mention with a placeholder URL.
+4. Provide the full rewritten script with affiliate mentions embedded.
+
+Return JSON:
+{
+  "insertions": [
+    {
+      "position": "early|mid|late",
+      "originalText": "...",
+      "rewrittenText": "...",
+      "product": "Product Name",
+      "category": "Software|Course|Physical|Service",
+      "estimatedCommission": "$X per sale",
+      "affiliateUrl": "[AFFILIATE_LINK_PLACEHOLDER]"
+    }
+  ],
+  "rewrittenScript": "full script with all 3 insertions applied",
+  "estimatedMonthlyRevenue": "$X–$Y at 1,000 views/month"
+}`;
+    try {
+      await waitForRateLimit();
+      const raw = await callStrategyAI(prompt);
+      const cleaned = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+      const match = cleaned.match(/\{[\s\S]*\}/);
+      if (!match) return res.status(500).json({ error: 'Affiliate embed generation failed' });
+      const result = JSON.parse(match[0]);
+      res.json(result);
+    } catch (error: any) {
+      console.error('Affiliate embed error:', error.message);
+      res.status(500).json({ error: 'Affiliate embed generation failed' });
     }
   });
 
