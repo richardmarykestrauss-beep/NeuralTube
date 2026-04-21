@@ -27,6 +27,9 @@ interface CompetitorData {
   niche: string;
   channels: CompetitorChannel[];
   fetchedAt: string;
+  isFallback?: boolean;
+  fallbackReason?: string;
+  source?: string;
 }
 
 const NICHES = [
@@ -116,6 +119,19 @@ const CompetitorPage = () => {
         <div className="flex items-center gap-2 text-destructive text-sm bg-destructive/10 border border-destructive/20 rounded-lg p-4">
           <AlertTriangle className="h-4 w-4 flex-shrink-0" />
           <span>{error}</span>
+        </div>
+      )}
+
+      {/* Fallback data warning */}
+      {data?.isFallback && (
+        <div className="flex items-start gap-2 text-yellow-400 text-sm bg-yellow-400/10 border border-yellow-400/20 rounded-lg p-4">
+          <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="font-semibold">Showing estimated data — YouTube API unavailable</p>
+            {data.fallbackReason && (
+              <p className="text-xs text-yellow-400/70 mt-1">{data.fallbackReason}</p>
+            )}
+          </div>
         </div>
       )}
 

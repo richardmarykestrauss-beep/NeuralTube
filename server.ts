@@ -152,9 +152,8 @@ async function startServer() {
     const origin = req.headers.origin;
     if (origin && allowedOrigins.includes(origin)) {
       res.header('Access-Control-Allow-Origin', origin);
-    } else {
-      res.header('Access-Control-Allow-Origin', 'https://neural-tube.vercel.app');
     }
+    // Non-whitelisted origins receive no ACAO header — browser will block them.
     res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
     res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
     if (req.method === 'OPTIONS') return res.sendStatus(200);
@@ -333,13 +332,26 @@ async function startServer() {
   });
 
   // ─── Thumbnail Generation ─────────────────────────────────────────────────
+  // Accepts optional `style` param: bold_contrast | minimal | dramatic | default
+  // Each style uses a distinct AI prompt so A/B variants are genuinely different.
   app.post("/api/thumbnail", async (req, res) => {
-    const { title, niche } = req.body;
+    const { title, niche, style = 'default' } = req.body;
     if (!title) return res.status(400).json({ error: 'title is required' });
+
+    const stylePrompts: Record<string, string> = {
+      bold_contrast: `You are a YouTube thumbnail designer specialising in BOLD, high-contrast designs.\nGenerate a thumbnail concept for: "${title}" in the ${niche || 'general'} niche.\nRules: Use a BRIGHT, saturated background (red, orange, yellow). Overlay text must be 2-4 words in ALL CAPS. Emotion must be SHOCK or URGENCY.\nReturn ONLY a JSON object with no markdown: { "text": "SHORT BOLD TEXT", "color": "#FF4500", "emotion": "shock" }`,
+
+      minimal: `You are a YouTube thumbnail designer specialising in MINIMAL, clean designs.\nGenerate a thumbnail concept for: "${title}" in the ${niche || 'general'} niche.\nRules: Use a DARK background (deep navy, charcoal, or black). Overlay text must be 3-5 words, title-case, understated. Emotion must be CURIOSITY or INTRIGUE.\nReturn ONLY a JSON object with no markdown: { "text": "Understated Title Text", "color": "#1a1a2e", "emotion": "curiosity" }`,
+
+      dramatic: `You are a YouTube thumbnail designer specialising in DRAMATIC, cinematic designs.\nGenerate a thumbnail concept for: "${title}" in the ${niche || 'general'} niche.\nRules: Use a DEEP, moody background (dark purple, crimson, or midnight blue). Overlay text must be 4-6 words with a dramatic hook. Emotion must be EXCITEMENT or AWE.\nReturn ONLY a JSON object with no markdown: { "text": "Dramatic Hook Text Here", "color": "#533483", "emotion": "excitement" }`,
+
+      default: `Generate a YouTube thumbnail concept for: "${title}" in the ${niche || 'general'} niche.\nReturn ONLY a JSON object with no markdown: { "text": "short overlay text max 5 words", "color": "dominant hex color like #FF4500", "emotion": "shock or curiosity or excitement" }`,
+    };
+
+    const promptToUse = stylePrompts[style] || stylePrompts.default;
+
     try {
-      const concept = await callStrategyAI(
-        `Generate a YouTube thumbnail concept for: "${title}" in the ${niche || 'general'} niche.\nReturn ONLY a JSON object with no markdown: { "text": "short overlay text max 5 words", "color": "dominant hex color like #FF4500", "emotion": "shock or curiosity or excitement" }`
-      );
+      const concept = await callStrategyAI(promptToUse);
       let conceptData: any = { text: title.substring(0, 30), color: 'FF4500', emotion: 'curiosity' };
       try {
         const cleaned = concept.replace(/```json/gi, '').replace(/```/g, '').trim();
@@ -369,10 +381,12 @@ async function startServer() {
 
   // ─── YouTube Upload ───────────────────────────────────────────────────────
   app.post("/api/youtube/upload", async (req, res) => {
-    const { title, description, tags, videoUrl, videoBase64, privacyStatus = 'public' } = req.body;
+    const { title, description, tags, videoUrl, videoBase64, privacyStatus = 'public', tokens: bodyTokens } = req.body;
     if (!title) return res.status(400).json({ error: 'title is required' });
-    const refreshToken = process.env.YOUTUBE_REFRESH_TOKEN;
-    if (!refreshToken) return res.status(401).json({ error: 'YouTube not connected. Set YOUTUBE_REFRESH_TOKEN.' });
+    // Prefer token from request body (sent by frontend from Firestore user profile),
+    // fall back to the server-level env var.
+    const refreshToken = bodyTokens?.refresh_token || process.env.YOUTUBE_REFRESH_TOKEN;
+    if (!refreshToken) return res.status(401).json({ error: 'YouTube not connected. Set YOUTUBE_REFRESH_TOKEN or pass tokens in request body.' });
     try {
       const uploadClient = new google.auth.OAuth2(process.env.YOUTUBE_CLIENT_ID, process.env.YOUTUBE_CLIENT_SECRET);
       uploadClient.setCredentials({ refresh_token: refreshToken });
@@ -437,9 +451,9 @@ async function startServer() {
         `${process.env.APP_URL || 'http://localhost:3000'}/api/auth/youtube/callback`
       );
       const { tokens } = await callbackClient.getToken(code as string);
-      if (tokens.refresh_token) {
-        fs.writeFileSync('/tmp/youtube_refresh_token.txt', tokens.refresh_token);
-      }
+      // NOTE: Do NOT write the refresh token to /tmp — it is world-readable.
+      // The token is displayed on the success page for the user to copy into
+      // Cloud Run environment variables (YOUTUBE_REFRESH_TOKEN).
       oauth2Client.setCredentials(tokens);
       res.send(`
         <html><body style="font-family:sans-serif;padding:40px;background:#111;color:#fff">
@@ -603,7 +617,7 @@ async function startServer() {
 
     const tmpDir = `/tmp/video_${Date.now()}`;
     try {
-      await execAsync(`mkdir -p ${tmpDir}`);
+      fs.mkdirSync(tmpDir, { recursive: true });
 
       // ── Step 1: Fetch stock images from Pexels ──────────────────────────────
       const pexelsKey = process.env.PEXELS_API_KEY;
@@ -635,27 +649,33 @@ async function startServer() {
             }
           } else {
             // Fallback: generate a solid-color placeholder image using FFmpeg
+            // FFmpeg is a trusted binary — only the output path is variable and is
+            // constructed from a timestamp, not user input.
             const colors = ['1a1a2e', '16213e', '0f3460', '533483', '2d6a4f'];
             const color = colors[i % colors.length];
             const imgPath = `${tmpDir}/img_${i}.jpg`;
-            await execAsync(`ffmpeg -f lavfi -i color=c=#${color}:size=1280x720:duration=1 -vframes 1 ${imgPath} -y`);
+            await execAsync(`ffmpeg -f lavfi -i color=c=#${color}:size=1280x720:duration=1 -vframes 1 "${imgPath}" -y`);
             imagePaths.push(imgPath);
           }
         } catch (imgErr) {
           console.warn(`Image fetch failed for term "${searchTerms[i]}":`, imgErr);
-          // Generate placeholder
+          // Generate placeholder using FFmpeg — path is timestamp-based, not user input
           const imgPath = `${tmpDir}/img_${i}.jpg`;
-          await execAsync(`ffmpeg -f lavfi -i color=c=#1a1a2e:size=1280x720:duration=1 -vframes 1 ${imgPath} -y 2>/dev/null || true`);
-          if (fs.existsSync(imgPath)) imagePaths.push(imgPath);
+          try {
+            await execAsync(`ffmpeg -f lavfi -i color=c=#1a1a2e:size=1280x720:duration=1 -vframes 1 "${imgPath}" -y`);
+            if (fs.existsSync(imgPath)) imagePaths.push(imgPath);
+          } catch { /* skip this image */ }
         }
       }
 
       // Ensure we have at least 3 images
       while (imagePaths.length < 3) {
         const fallbackPath = `${tmpDir}/img_fallback_${imagePaths.length}.jpg`;
-        await execAsync(`ffmpeg -f lavfi -i color=c=#0f3460:size=1280x720:duration=1 -vframes 1 ${fallbackPath} -y 2>/dev/null || true`);
-        if (fs.existsSync(fallbackPath)) imagePaths.push(fallbackPath);
-        else break;
+        try {
+          await execAsync(`ffmpeg -f lavfi -i color=c=#0f3460:size=1280x720:duration=1 -vframes 1 "${fallbackPath}" -y`);
+          if (fs.existsSync(fallbackPath)) imagePaths.push(fallbackPath);
+          else break;
+        } catch { break; }
       }
 
       if (imagePaths.length === 0) {
@@ -715,8 +735,8 @@ async function startServer() {
       const videoBase64 = videoBuffer.toString('base64');
       const stats = fs.statSync(outputPath);
 
-      // Cleanup
-      execAsync(`rm -rf ${tmpDir}`).catch(() => {});
+      // Cleanup — use fs.rmSync instead of shell rm -rf
+      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore cleanup errors */ }
 
       res.json({
         success: true,
@@ -730,7 +750,7 @@ async function startServer() {
     } catch (error: any) {
       console.error('Video assembly error:', error);
       // Cleanup on error
-      execAsync(`rm -rf ${tmpDir}`).catch(() => {});
+      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
       res.status(500).json({ error: 'Video assembly failed', details: error.message });
     }
   });
@@ -877,9 +897,21 @@ async function startServer() {
     }
   });
 
-  // ─── Scheduler endpoints ────────────────────────────────────────────────────
+  // ─  // ─── Scheduler endpoints ──────────────────────────────────────────────
   app.get("/api/scheduler/status", (req, res) => {
     res.json(schedulerState);
+  });
+
+  // Returns queued trends that the scheduler has scanned but not yet consumed
+  app.get("/api/scheduler/pending-trends", (req, res) => {
+    const pending = (schedulerState as any).pendingTrends || [];
+    res.json({ pendingTrends: pending, count: pending.length });
+  });
+
+  // Clears consumed trends from the queue (call after frontend has processed them)
+  app.delete("/api/scheduler/pending-trends", (req, res) => {
+    (schedulerState as any).pendingTrends = [];
+    res.json({ success: true, message: 'Pending trends cleared' });
   });
 
   app.post("/api/scheduler/configure", (req, res) => {
@@ -904,7 +936,52 @@ async function startServer() {
     const niche = req.body.niche || schedulerState.niches[0];
     schedulerState.lastRunAt = new Date().toISOString();
     schedulerState.runCount++;
-    res.json({ success: true, message: `Manual scan triggered for: ${niche}`, runCount: schedulerState.runCount });
+
+    // Trigger a real trend scan and store results in pendingTrends
+    try {
+      const serpApiKey = process.env.SERP_API_KEY;
+      const nicheTermMap: Record<string, string> = {
+        'Tech & AI': 'artificial intelligence 2026',
+        'Finance & Crypto': 'cryptocurrency investing 2026',
+        'Health & Wellness': 'health tips 2026',
+        'Home & DIY': 'home improvement DIY 2026',
+        'Personal Development': 'self improvement 2026',
+      };
+      const searchTerm = nicheTermMap[niche] || niche;
+
+      let trends: any[] = [];
+      if (serpApiKey) {
+        const serpUrl = `https://serpapi.com/search.json?engine=google_trends&q=${encodeURIComponent(searchTerm)}&api_key=${serpApiKey}`;
+        const serpRes = await axios.get(serpUrl, { timeout: 10000 });
+        const timelineData = serpRes.data?.interest_over_time?.timeline_data || [];
+        trends = timelineData.slice(-3).map((point: any, i: number) => ({
+          topic: `${searchTerm} — ${point.date || `Week ${i + 1}`}`,
+          score: Math.min(99, point.values?.[0]?.extracted_value || 50),
+          niche,
+          scannedAt: new Date().toISOString(),
+        }));
+      } else {
+        // Gemini fallback
+        const aiResult = await callStrategyAI(
+          `List 3 trending YouTube video topics for the "${niche}" niche right now in 2026. Return ONLY a JSON array: [{"topic": "...", "score": 85}]`
+        );
+        try {
+          const match = aiResult.replace(/```json/gi, '').replace(/```/g, '').trim().match(/\[[\s\S]*\]/);
+          if (match) trends = JSON.parse(match[0]).map((t: any) => ({ ...t, niche, scannedAt: new Date().toISOString() }));
+        } catch { /* ignore parse errors */ }
+      }
+
+      if (!(schedulerState as any).pendingTrends) (schedulerState as any).pendingTrends = [];
+      (schedulerState as any).pendingTrends.push(...trends);
+      // Keep queue bounded to last 50 trends
+      if ((schedulerState as any).pendingTrends.length > 50) {
+        (schedulerState as any).pendingTrends = (schedulerState as any).pendingTrends.slice(-50);
+      }
+    } catch (scanErr: any) {
+      console.warn('Scheduler scan error:', scanErr.message);
+    }
+
+    res.json({ success: true, message: `Scan triggered for: ${niche}`, runCount: schedulerState.runCount });
   });
 
   // ─── Competitor Intelligence endpoint ─────────────────────────────────────
@@ -1008,7 +1085,14 @@ async function startServer() {
         { channelId: 'fallback2', channelTitle: `${niche} Explained`, channelUrl: '#', thumbnail: '', subscriberCount: 180000, videoCount: 145, viewCount: 9500000, avgViewsPerVideo: 65517, uploadFrequency: '1x/week', contentGap: gaps[1], opportunityScore: 85 },
         { channelId: 'fallback3', channelTitle: `${niche} Pro Tips`, channelUrl: '#', thumbnail: '', subscriberCount: 92000, videoCount: 89, viewCount: 4200000, avgViewsPerVideo: 47191, uploadFrequency: '3x/week', contentGap: gaps[2], opportunityScore: 91 },
       ];
-      res.json({ niche, channels: fallbackChannels, fetchedAt: new Date().toISOString(), source: 'fallback' });
+      res.json({
+        niche,
+        channels: fallbackChannels,
+        fetchedAt: new Date().toISOString(),
+        source: 'fallback',
+        isFallback: true,
+        fallbackReason: error.message?.slice(0, 200) || 'YouTube API unavailable'
+      });
     }
   });
 
