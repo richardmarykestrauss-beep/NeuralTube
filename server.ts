@@ -1604,6 +1604,165 @@ Return ONLY valid JSON, no markdown:
     }
   });
 
+  // ─── Cross-Channel Intelligence ─────────────────────────────────────────────
+  app.get('/api/analytics/cross-channel', requireAuth, async (req: Request, res: Response) => {
+    const uid = (req as any).uid as string;
+    try {
+      const channelsSnap = await admin.firestore()
+        .collection('users').doc(uid).collection('channels').get();
+
+      if (channelsSnap.empty) {
+        return res.json({ channels: [], portfolio: null, insights: [] });
+      }
+
+      const channelResults: any[] = [];
+
+      for (const channelDoc of channelsSnap.docs) {
+        const channelData = channelDoc.data();
+        const refreshToken = channelData.youtubeTokens?.refresh_token;
+        const entry: any = {
+          channelId: channelDoc.id,
+          channelTitle: channelData.youtubeChannelTitle || channelDoc.id,
+          channelThumbnail: channelData.youtubeChannelThumbnail || null,
+          niche: channelData.niche || 'General',
+        };
+
+        if (!refreshToken) {
+          entry.error = 'No OAuth token';
+          channelResults.push(entry);
+          continue;
+        }
+
+        try {
+          const client = new google.auth.OAuth2(
+            process.env.YOUTUBE_CLIENT_ID,
+            process.env.YOUTUBE_CLIENT_SECRET
+          );
+          client.setCredentials({ refresh_token: refreshToken });
+          const youtube = google.youtube({ version: 'v3', auth: client });
+          const ytAnalytics = google.youtubeAnalytics({ version: 'v2', auth: client });
+
+          // Channel stats
+          const channelRes = await youtube.channels.list({
+            part: ['statistics', 'contentDetails'],
+            mine: true
+          });
+          const ch = channelRes.data.items?.[0];
+          const stats = ch?.statistics;
+          entry.stats = {
+            subscribers: parseInt(stats?.subscriberCount || '0'),
+            totalViews: parseInt(stats?.viewCount || '0'),
+            videoCount: parseInt(stats?.videoCount || '0'),
+          };
+
+          // Top 5 videos by view count
+          const uploadsId = ch?.contentDetails?.relatedPlaylists?.uploads;
+          if (uploadsId) {
+            const playlistRes = await youtube.playlistItems.list({
+              part: ['contentDetails'], playlistId: uploadsId, maxResults: 20
+            });
+            const videoIds = (playlistRes.data.items || [])
+              .map((i: any) => i.contentDetails?.videoId).filter(Boolean);
+            if (videoIds.length) {
+              const videoRes = await youtube.videos.list({
+                part: ['statistics', 'snippet'], id: videoIds
+              });
+              const videos = (videoRes.data.items || []).map((v: any) => ({
+                title: v.snippet?.title,
+                videoId: v.id,
+                views: parseInt(v.statistics?.viewCount || '0'),
+                likes: parseInt(v.statistics?.likeCount || '0'),
+                thumbnail: v.snippet?.thumbnails?.medium?.url,
+                publishedAt: v.snippet?.publishedAt,
+              }));
+              entry.topVideos = videos.sort((a: any, b: any) => b.views - a.views).slice(0, 5);
+              entry.avgViews = videos.length
+                ? Math.round(videos.reduce((s: number, v: any) => s + v.views, 0) / videos.length)
+                : 0;
+            }
+          }
+
+          // 30-day analytics
+          try {
+            const endDate = new Date().toISOString().split('T')[0];
+            const startDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+            const analyticsRes = await ytAnalytics.reports.query({
+              ids: 'channel==MINE',
+              startDate,
+              endDate,
+              metrics: 'views,estimatedMinutesWatched,subscribersGained,likes',
+            });
+            const rows = analyticsRes.data.rows || [];
+            entry.last30d = {
+              views: rows.reduce((s: number, r: any) => s + (r[0] || 0), 0),
+              watchMinutes: rows.reduce((s: number, r: any) => s + (r[1] || 0), 0),
+              subscribersGained: rows.reduce((s: number, r: any) => s + (r[2] || 0), 0),
+              likes: rows.reduce((s: number, r: any) => s + (r[3] || 0), 0),
+            };
+          } catch (_) { /* analytics not enabled for this channel */ }
+
+        } catch (err: any) {
+          entry.error = 'Could not fetch data';
+        }
+
+        channelResults.push(entry);
+      }
+
+      // Portfolio-level aggregation
+      const connected = channelResults.filter(c => !c.error && c.stats);
+      const portfolio = {
+        totalChannels: channelResults.length,
+        connectedChannels: connected.length,
+        totalSubscribers: connected.reduce((s, c) => s + (c.stats?.subscribers || 0), 0),
+        totalViews: connected.reduce((s, c) => s + (c.stats?.totalViews || 0), 0),
+        totalVideos: connected.reduce((s, c) => s + (c.stats?.videoCount || 0), 0),
+        views30d: connected.reduce((s, c) => s + (c.last30d?.views || 0), 0),
+        subscribersGained30d: connected.reduce((s, c) => s + (c.last30d?.subscribersGained || 0), 0),
+        topChannel: connected.sort((a, b) => (b.stats?.subscribers || 0) - (a.stats?.subscribers || 0))[0]?.channelTitle || null,
+      };
+
+      // Gemini cross-channel insights
+      let insights: any[] = [];
+      if (connected.length > 0) {
+        try {
+          await waitForRateLimit();
+          const summary = connected.map(c => ({
+            channel: c.channelTitle,
+            niche: c.niche,
+            subscribers: c.stats?.subscribers,
+            avgViews: c.avgViews,
+            topVideoTitles: (c.topVideos || []).slice(0, 3).map((v: any) => v.title),
+            views30d: c.last30d?.views,
+            subscribersGained30d: c.last30d?.subscribersGained,
+          }));
+          const prompt = `You are a YouTube portfolio strategist. A creator runs ${connected.length} channels. Analyze the data and return 4 actionable cross-channel insights.
+
+Portfolio data:
+${JSON.stringify(summary, null, 2)}
+
+Return ONLY a JSON array of 4 insights:
+[
+  {
+    "pattern": "Short title (max 6 words)",
+    "finding": "What the data shows across channels (1-2 sentences)",
+    "action": "Specific step to take NOW (1 sentence)",
+    "applyTo": "all channels|strongest channel|weakest channel|new content",
+    "impact": "high|medium|low"
+  }
+]`;
+          const raw = await callStrategyAI(prompt);
+          const match = raw.match(/\[[\s\S]*\]/);
+          if (match) insights = JSON.parse(match[0]);
+        } catch (_) { insights = []; }
+      }
+
+      res.json({ channels: channelResults, portfolio, insights });
+    } catch (error: any) {
+      console.error('Cross-channel analytics error:', error.message);
+      res.status(500).json({ error: 'Failed to fetch cross-channel analytics' });
+    }
+  });
+
   // ─── Affiliate Script Integration ───────────────────────────────────────────────────────────────────
   app.post('/api/strategy/affiliate-embed', requireAuth, async (req: Request, res: Response) => {
     const { script, niche, title } = req.body || {};

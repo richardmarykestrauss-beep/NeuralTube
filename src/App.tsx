@@ -20,6 +20,7 @@ import StrategyPage from "./pages/StrategyPage.tsx";
 import CompetitorPage from "./pages/CompetitorPage.tsx";
 import KeywordResearchPage from "./pages/KeywordResearchPage.tsx";
 import ChannelsPage from "./pages/ChannelsPage.tsx";
+import CrossChannelPage from "./pages/CrossChannelPage.tsx";
 import NotFound from "./pages/NotFound.tsx";
 
 const queryClient = new QueryClient();
@@ -49,6 +50,7 @@ const App = () => (
                 <Route path="competitors" element={<CompetitorPage />} />
                 <Route path="keywords" element={<KeywordResearchPage />} />
                 <Route path="channels" element={<ChannelsPage />} />
+                <Route path="cross-channel" element={<CrossChannelPage />} />
               </Route>
               <Route path="*" element={<NotFound />} />
             </Routes>

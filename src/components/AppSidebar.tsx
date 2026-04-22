@@ -4,7 +4,7 @@ import { useNavigate, useLocation } from "react-router-dom";
 import {
   Activity, LayoutDashboard, Film, Eye, Target, DollarSign, Brain, Settings,
   ChevronLeft, ChevronRight, HelpCircle, Youtube, Loader2, Shield, Rocket, Bell, Users, Search,
-  ChevronDown, PlusCircle, Tv2
+  ChevronDown, PlusCircle, Tv2, Network
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { StatusIndicator } from "./dashboard/StatusIndicator";
@@ -24,6 +24,7 @@ const navItems = [
   { id: "/ai-engine", label: "AI Engine", icon: Brain },
   { id: "/youtube-channel", label: "YouTube Channel", icon: Youtube },
   { id: "/channels", label: "My Channels", icon: Tv2 },
+  { id: "/cross-channel", label: "Portfolio Intel", icon: Network },
   { id: "/strategy", label: "Strategy Intel", icon: Rocket },
   { id: "/competitors", label: "Competitor Intel", icon: Users },
   { id: "/keywords", label: "Keyword Research", icon: Search },
