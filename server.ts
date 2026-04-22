@@ -1824,13 +1824,27 @@ Return JSON:
     if (!channelId || typeof channelId !== 'string' || !/^[\w-]{1,100}$/.test(channelId)) {
       return res.status(400).json({ error: 'Invalid channelId' });
     }
-    if (!tokens?.refresh_token) return res.status(400).json({ error: 'tokens.refresh_token is required' });
+    // access_token alone is enough to fetch channel info; refresh_token preferred for persistence
+    if (!tokens?.access_token && !tokens?.refresh_token) {
+      return res.status(400).json({ error: 'No OAuth tokens provided — authorization may have failed' });
+    }
+    if (!process.env.YOUTUBE_CLIENT_ID || !process.env.YOUTUBE_CLIENT_SECRET) {
+      return res.status(500).json({ error: 'YouTube API credentials not configured on the server' });
+    }
     try {
       const saveClient = new google.auth.OAuth2(process.env.YOUTUBE_CLIENT_ID, process.env.YOUTUBE_CLIENT_SECRET);
-      saveClient.setCredentials({ refresh_token: tokens.refresh_token });
+      // Set all available tokens so googleapis uses the access_token directly
+      // instead of having to do an extra refresh round-trip
+      saveClient.setCredentials(tokens);
       const yt = google.youtube({ version: 'v3', auth: saveClient });
-      const resp = await yt.channels.list({ part: ['snippet', 'statistics'], mine: true });
-      const ch = resp.data.items?.[0];
+      let ch: any = null;
+      try {
+        const resp = await yt.channels.list({ part: ['snippet', 'statistics'], mine: true });
+        ch = resp.data.items?.[0] || null;
+      } catch (ytErr: any) {
+        console.error('YouTube channel fetch error:', ytErr.message);
+        // Still save the channel with placeholder data rather than failing entirely
+      }
       const channel = {
         channelId,
         channelName: ch?.snippet?.title || channelId,
@@ -1850,6 +1864,13 @@ Return JSON:
       res.json({ success: true, channel });
     } catch (error: any) {
       console.error('Channel save error:', error.message);
+      // Surface the actual error category to help with diagnosis
+      if (error.message?.includes('PERMISSION_DENIED') || error.message?.includes('insufficient')) {
+        return res.status(500).json({ error: 'Firestore permission denied — check service account credentials' });
+      }
+      if (error.message?.includes('UNAUTHENTICATED') || error.code === 401) {
+        return res.status(500).json({ error: 'YouTube credentials invalid or expired — re-authenticate' });
+      }
       res.status(500).json({ error: 'Failed to save channel' });
     }
   });
