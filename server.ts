@@ -1299,6 +1299,116 @@ async function startServer() {
     res.json({ success: true, message: `Scan triggered for: ${niche}`, runCount: schedulerState.runCount });
   });
 
+  // ─── Smart Scheduler: optimal posting times ────────────────────────────────
+  // Analyses 90-day YouTube Analytics to find best day-of-week to post,
+  // then uses Gemini to recommend an optimal publishing cadence.
+  app.get('/api/scheduler/optimal-times', requireAuth, async (req: Request, res: Response) => {
+    const uid = (req as any).uid as string;
+    const channelId = req.query.channelId as string | undefined;
+    const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    try {
+      const refreshToken = await getRefreshTokenForChannel(uid, channelId);
+      const client = new google.auth.OAuth2(process.env.YOUTUBE_CLIENT_ID, process.env.YOUTUBE_CLIENT_SECRET);
+      client.setCredentials({ refresh_token: refreshToken });
+      const ytAnalytics = google.youtubeAnalytics({ version: 'v2', auth: client });
+      const youtube = google.youtube({ version: 'v3', auth: client });
+
+      // Fetch channel niche / subscriber count for AI context
+      let channelInfo: any = {};
+      try {
+        const chRes = await youtube.channels.list({ part: ['snippet', 'statistics'], mine: true });
+        const ch = chRes.data.items?.[0];
+        channelInfo = {
+          title: ch?.snippet?.title,
+          subscribers: parseInt(ch?.statistics?.subscriberCount || '0'),
+          niche: channelId
+            ? (await admin.firestore().doc(`users/${uid}/channels/${channelId}`).get()).data()?.niche
+            : 'General',
+        };
+      } catch (_) {}
+
+      // 90-day daily view data
+      const endDate = new Date().toISOString().split('T')[0];
+      const startDate = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+      const analyticsRes = await ytAnalytics.reports.query({
+        ids: 'channel==MINE',
+        startDate,
+        endDate,
+        metrics: 'views,estimatedMinutesWatched,subscribersGained',
+        dimensions: 'day',
+      });
+
+      // Aggregate by day of week
+      const byDay: Record<number, { views: number; watchMin: number; subs: number; count: number }> = {};
+      for (let i = 0; i < 7; i++) byDay[i] = { views: 0, watchMin: 0, subs: 0, count: 0 };
+
+      for (const row of analyticsRes.data.rows || []) {
+        const d = new Date(row[0] as string);
+        const dow = d.getDay();
+        byDay[dow].views += (row[1] as number) || 0;
+        byDay[dow].watchMin += (row[2] as number) || 0;
+        byDay[dow].subs += (row[3] as number) || 0;
+        byDay[dow].count++;
+      }
+
+      const dayStats = DAYS.map((name, i) => ({
+        day: name,
+        avgViews: byDay[i].count ? Math.round(byDay[i].views / byDay[i].count) : 0,
+        avgWatchMin: byDay[i].count ? Math.round(byDay[i].watchMin / byDay[i].count) : 0,
+        avgSubs: byDay[i].count ? Math.round(byDay[i].subs / byDay[i].count) : 0,
+      }));
+
+      const sorted = [...dayStats].sort((a, b) => b.avgViews - a.avgViews);
+      const bestDays = sorted.slice(0, 3).map(d => d.day);
+
+      // Gemini posting-time recommendation
+      let recommendations: any[] = [];
+      try {
+        await waitForRateLimit();
+        const prompt = `You are a YouTube growth strategist. Based on this channel's 90-day analytics data, recommend the optimal posting schedule.
+
+Channel: ${channelInfo.title || 'Unknown'} | Niche: ${channelInfo.niche || 'General'} | Subscribers: ${channelInfo.subscribers || 0}
+
+Day-of-week performance (avg views per day):
+${dayStats.map(d => `${d.day}: ${d.avgViews} views, ${d.avgWatchMin} watch-mins, +${d.avgSubs} subs`).join('\n')}
+
+Return ONLY a JSON array of 3 recommendations:
+[
+  {
+    "title": "Short recommendation title",
+    "recommendation": "Specific posting advice (1-2 sentences)",
+    "bestDays": ["Day1", "Day2"],
+    "bestTime": "HH:MM (24h, e.g. 14:00)",
+    "reasoning": "Why this timing works for this niche and audience",
+    "expectedImpact": "+X% views estimate"
+  }
+]`;
+        const raw = await callStrategyAI(prompt);
+        const match = raw.match(/\[[\s\S]*\]/);
+        if (match) recommendations = JSON.parse(match[0]);
+      } catch (_) {}
+
+      res.json({ dayStats, bestDays, recommendations, channelInfo });
+    } catch (error: any) {
+      console.error('Optimal times error:', error.message);
+      // Return niche-based defaults if analytics unavailable
+      res.json({
+        dayStats: [],
+        bestDays: ['Tuesday', 'Thursday', 'Saturday'],
+        recommendations: [{
+          title: 'Analytics Unavailable — Using Niche Defaults',
+          recommendation: 'Connect your YouTube channel and ensure YouTube Analytics API is enabled to get personalised posting times.',
+          bestDays: ['Tuesday', 'Thursday', 'Saturday'],
+          bestTime: '14:00',
+          reasoning: 'General best practice for most YouTube niches based on industry data.',
+          expectedImpact: 'Varies by channel',
+        }],
+        channelInfo: {},
+        fallback: true,
+      });
+    }
+  });
+
   // ─── Competitor Intelligence endpoint ─────────────────────────────────────
   app.get("/api/youtube/competitors", async (req, res) => {
     const niche = (req.query.niche as string) || 'Tech & AI';

@@ -1,11 +1,13 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "@/components/FirebaseProvider";
+import { useChannel } from "@/context/ChannelContext";
 import { doc, updateDoc, collection, getDocs, writeBatch } from "firebase/firestore";
-import { db } from "@/firebase";
+import { db, auth } from "@/firebase";
 import { toast } from "sonner";
 import {
   Key, Save, Loader2, Clock, Zap, Youtube, Trash2,
-  ToggleLeft, ToggleRight, ChevronDown, ChevronUp, Bell
+  ToggleLeft, ToggleRight, ChevronDown, ChevronUp, Bell,
+  Calendar, TrendingUp, RefreshCw, Sparkles
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { API_BASE_URL } from "@/config/api";
@@ -40,8 +42,12 @@ interface SchedulerStatus {
   niches: string[];
 }
 
+interface DayStat { day: string; avgViews: number; avgWatchMin: number; avgSubs: number; }
+interface OptimalRec { title: string; recommendation: string; bestDays: string[]; bestTime: string; reasoning: string; expectedImpact: string; }
+
 const SettingsPage = () => {
   const { profile, user } = useAuth();
+  const { activeChannel } = useChannel();
 
   const [serpApiKey, setSerpApiKey] = useState("");
   const [youtubeKey, setYoutubeKey] = useState("");
@@ -64,6 +70,12 @@ const SettingsPage = () => {
 
   const [isWiping, setIsWiping] = useState(false);
   const [wipeConfirm, setWipeConfirm] = useState("");
+
+  const [dayStats, setDayStats] = useState<DayStat[]>([]);
+  const [optimalRecs, setOptimalRecs] = useState<OptimalRec[]>([]);
+  const [isLoadingOptimal, setIsLoadingOptimal] = useState(false);
+  const [optimalBestDays, setOptimalBestDays] = useState<string[]>([]);
+  const [optimalFallback, setOptimalFallback] = useState(false);
 
   const [openSection, setOpenSection] = useState<string>("scheduler");
 
@@ -157,6 +169,28 @@ const SettingsPage = () => {
       setWipeConfirm("");
     } catch { toast.error("Wipe failed"); }
     finally { setIsWiping(false); }
+  };
+
+  const fetchOptimalTimes = async () => {
+    setIsLoadingOptimal(true);
+    try {
+      const user = auth.currentUser;
+      if (!user) throw new Error("Not signed in");
+      const token = await user.getIdToken();
+      const params = activeChannel ? `?channelId=${activeChannel.channelId}` : "";
+      const res = await fetch(`${API_BASE_URL}/api/scheduler/optimal-times${params}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      setDayStats(data.dayStats || []);
+      setOptimalBestDays(data.bestDays || []);
+      setOptimalRecs(data.recommendations || []);
+      setOptimalFallback(data.fallback || false);
+    } catch {
+      toast.error("Could not fetch optimal times — check your YouTube connection");
+    } finally {
+      setIsLoadingOptimal(false);
+    }
   };
 
   const toggleNiche = (niche: string) =>
@@ -253,6 +287,91 @@ const SettingsPage = () => {
             className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded text-xs font-mono font-bold hover:bg-primary/90 disabled:opacity-50">
             {isSavingPrefs ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />} SAVE NICHES
           </button>
+        </div>
+      </Section>
+
+      <Section id="smart-schedule" title="Smart Posting Schedule" icon={Calendar}>
+        <div className="pt-4 space-y-5">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-bold">Optimal Posting Times</p>
+              <p className="text-xs text-muted-foreground">
+                Analyses your last 90 days of YouTube Analytics to find the best days and times to publish.
+                {activeChannel && <span className="text-primary"> Using: {activeChannel.youtubeChannelTitle}</span>}
+              </p>
+            </div>
+            <button
+              onClick={fetchOptimalTimes}
+              disabled={isLoadingOptimal}
+              className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded text-xs font-mono font-bold hover:bg-primary/90 disabled:opacity-50 shrink-0"
+            >
+              {isLoadingOptimal ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+              {isLoadingOptimal ? "Analysing..." : "Analyse My Channel"}
+            </button>
+          </div>
+
+          {optimalFallback && (
+            <div className="flex items-center gap-2 text-yellow-400 text-xs bg-yellow-400/10 border border-yellow-400/20 rounded p-3 font-mono">
+              <TrendingUp className="h-3.5 w-3.5 shrink-0" />
+              No analytics data yet — showing industry defaults. Connect a channel and post a few videos to get personalised recommendations.
+            </div>
+          )}
+
+          {dayStats.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-[10px] font-mono uppercase text-muted-foreground">Avg Views by Day of Week (last 90 days)</p>
+              {(() => {
+                const maxViews = Math.max(...dayStats.map(d => d.avgViews), 1);
+                return dayStats.map(d => (
+                  <div key={d.day} className="flex items-center gap-3">
+                    <span className={cn(
+                      "text-[10px] font-mono w-20 shrink-0",
+                      optimalBestDays.includes(d.day) ? "text-primary font-bold" : "text-muted-foreground"
+                    )}>{d.day}</span>
+                    <div className="flex-1 h-2 bg-secondary rounded-full overflow-hidden">
+                      <div
+                        className={cn("h-full rounded-full transition-all", optimalBestDays.includes(d.day) ? "bg-primary" : "bg-secondary-foreground/30")}
+                        style={{ width: `${Math.round((d.avgViews / maxViews) * 100)}%` }}
+                      />
+                    </div>
+                    <span className="text-[10px] font-mono text-muted-foreground w-16 text-right shrink-0">
+                      {d.avgViews.toLocaleString()} views
+                    </span>
+                  </div>
+                ));
+              })()}
+              <p className="text-[9px] font-mono text-primary mt-1">★ Highlighted = recommended posting days</p>
+            </div>
+          )}
+
+          {optimalRecs.length > 0 && (
+            <div className="space-y-3">
+              <p className="text-[10px] font-mono uppercase text-muted-foreground">AI Recommendations</p>
+              {optimalRecs.map((rec, i) => (
+                <div key={i} className="bg-secondary/20 border border-border rounded-lg p-3 space-y-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="text-xs font-mono font-bold">{rec.title}</p>
+                    <span className="text-[10px] font-mono text-green-400 shrink-0">{rec.expectedImpact}</span>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">{rec.recommendation}</p>
+                  <div className="flex items-center gap-3 text-[10px] font-mono text-muted-foreground">
+                    <span className="flex items-center gap-1"><Calendar className="h-3 w-3" />{rec.bestDays.join(", ")}</span>
+                    <span className="flex items-center gap-1"><Clock className="h-3 w-3" />{rec.bestTime}</span>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground italic">{rec.reasoning}</p>
+                  <button
+                    onClick={() => {
+                      setUploadTime(rec.bestTime);
+                      toast.success(`Upload time set to ${rec.bestTime} — save preferences to apply`);
+                    }}
+                    className="text-[10px] font-mono text-primary hover:underline flex items-center gap-1"
+                  >
+                    <RefreshCw className="h-2.5 w-2.5" /> Apply this schedule
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </Section>
 
