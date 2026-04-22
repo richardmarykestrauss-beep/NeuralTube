@@ -4,6 +4,7 @@ import { Play, Loader2, Zap, ShieldCheck, Youtube, Settings as SettingsIcon, Che
 import { useState, useEffect, useRef } from "react";
 import { runAutonomousScan } from "@/services/automationService";
 import { useAuth } from "@/components/FirebaseProvider";
+import { useChannel } from "@/context/ChannelContext";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { doc, updateDoc, getDoc } from "firebase/firestore";
@@ -27,6 +28,7 @@ const AIEnginePage = () => {
   const [ytLoading, setYtLoading] = useState(true);
   const uptimeIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const { user } = useAuth();
+  const { activeChannel } = useChannel();
 
   // Fetch server start time and compute live uptime
   useEffect(() => {
@@ -54,9 +56,15 @@ const AIEnginePage = () => {
     return () => { if (uptimeIntervalRef.current) clearInterval(uptimeIntervalRef.current); };
   }, []);
 
-  // Fetch live YouTube connection status from backend
+  // YouTube status: connected if an active channel with tokens is selected
   const fetchYtStatus = async () => {
     setYtLoading(true);
+    if (activeChannel?.youtubeTokens?.refresh_token) {
+      setYtStatus({ connected: true, channelTitle: activeChannel.youtubeChannelTitle });
+      setYtLoading(false);
+      return;
+    }
+    // Fall back to env-var check for legacy setups
     try {
       const resp = await fetch(`${API_BASE_URL}/api/auth/youtube/status`);
       if (resp.ok) {
@@ -72,7 +80,7 @@ const AIEnginePage = () => {
     }
   };
 
-  useEffect(() => { fetchYtStatus(); }, []);
+  useEffect(() => { fetchYtStatus(); }, [activeChannel]);
 
   // Load auto-upload preference from Firestore
   useEffect(() => {
@@ -108,17 +116,15 @@ const AIEnginePage = () => {
 
   const handleLaunch = async () => {
     if (!user) return;
-    if (!ytStatus?.connected) {
-      toast.error("YouTube not connected. Please re-authenticate via the YouTube Channel page.");
+    if (!activeChannel) {
+      toast.error("No channel selected. Go to My Channels and connect a YouTube channel first.");
       return;
     }
     setIsRunning(true);
     toast.success("Autonomous Engine Launched!");
-    const niches = ["Tech & AI", "Personal Finance", "Health & Wellness", "Home Improvement"];
+    const niche = activeChannel.niche || "Tech & AI";
     try {
-      for (const niche of niches) {
-        await runAutonomousScan(niche, user.uid);
-      }
+      await runAutonomousScan(niche, user.uid, activeChannel.channelId);
     } catch (error) {
       console.error("Engine run failed:", error);
       toast.error("Engine cycle encountered an error — check Activity Feed.");

@@ -1,23 +1,28 @@
 import { useState, useEffect } from "react";
-import { 
-  Search, Sparkles, FileText, Mic, Film, Image, Tags, Upload, CheckCircle2, 
-  ChevronRight, Clock, Zap, BarChart3, ArrowRight, Eye, AlertTriangle, Loader2 
+import {
+  Search, Sparkles, FileText, Mic, Film, Image, Tags, Upload, CheckCircle2,
+  ChevronRight, Clock, Zap, BarChart3, ArrowRight, Eye, AlertTriangle, Loader2,
+  Clapperboard, XCircle
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { subscribeToVideos, Video, updateVideoStage } from "@/services/firestoreService";
 import { publishVideo } from "@/services/automationService";
+import { useChannel } from "@/context/ChannelContext";
+import { useAuth } from "@/components/FirebaseProvider";
 import { toast } from "sonner";
 
 const STAGES = [
-  { id: "research", label: "RESEARCH", icon: Search, color: "text-cyber", bgColor: "bg-cyber/10", borderColor: "border-cyber/30" },
-  { id: "ideation", label: "IDEATION", icon: Sparkles, color: "text-ai-glow", bgColor: "bg-ai-glow/10", borderColor: "border-ai-glow/30" },
-  { id: "scripting", label: "SCRIPT", icon: FileText, color: "text-info", bgColor: "bg-info/10", borderColor: "border-info/30" },
-  { id: "voiceover", label: "VOICE", icon: Mic, color: "text-primary", bgColor: "bg-primary/10", borderColor: "border-primary/30" },
-  { id: "visuals", label: "VISUALS", icon: Film, color: "text-trending", bgColor: "bg-trending/10", borderColor: "border-trending/30" },
-  { id: "thumbnail", label: "THUMB", icon: Image, color: "text-warning", bgColor: "bg-warning/10", borderColor: "border-warning/30" },
-  { id: "seo", label: "SEO", icon: Tags, color: "text-revenue", bgColor: "bg-revenue/10", borderColor: "border-revenue/30" },
-  { id: "review", label: "REVIEW", icon: Eye, color: "text-accent", bgColor: "bg-accent/10", borderColor: "border-accent/30" },
-  { id: "publish", label: "PUBLISH", icon: Upload, color: "text-success", bgColor: "bg-success/10", borderColor: "border-success/30" },
+  { id: "research",  label: "RESEARCH",  icon: Search,       color: "text-cyber",    bgColor: "bg-cyber/10",    borderColor: "border-cyber/30" },
+  { id: "ideation",  label: "IDEATION",  icon: Sparkles,     color: "text-ai-glow",  bgColor: "bg-ai-glow/10",  borderColor: "border-ai-glow/30" },
+  { id: "scripting", label: "SCRIPT",    icon: FileText,     color: "text-info",     bgColor: "bg-info/10",     borderColor: "border-info/30" },
+  { id: "voiceover", label: "VOICE",     icon: Mic,          color: "text-primary",  bgColor: "bg-primary/10",  borderColor: "border-primary/30" },
+  { id: "visuals",   label: "VISUALS",   icon: Film,         color: "text-trending", bgColor: "bg-trending/10", borderColor: "border-trending/30" },
+  { id: "thumbnail", label: "THUMB",     icon: Image,        color: "text-warning",  bgColor: "bg-warning/10",  borderColor: "border-warning/30" },
+  { id: "assembly",  label: "ASSEMBLY",  icon: Clapperboard, color: "text-purple-400", bgColor: "bg-purple-400/10", borderColor: "border-purple-400/30" },
+  { id: "seo",       label: "SEO",       icon: Tags,         color: "text-revenue",  bgColor: "bg-revenue/10",  borderColor: "border-revenue/30" },
+  { id: "review",    label: "REVIEW",    icon: Eye,          color: "text-accent",   bgColor: "bg-accent/10",   borderColor: "border-accent/30" },
+  { id: "publish",   label: "PUBLISH",   icon: Upload,       color: "text-success",  bgColor: "bg-success/10",  borderColor: "border-success/30" },
+  { id: "error",     label: "ERROR",     icon: XCircle,      color: "text-destructive", bgColor: "bg-destructive/10", borderColor: "border-destructive/30" },
 ];
 
 const qualityGates: Record<string, { min: number; checks: string[] }> = {
@@ -34,14 +39,22 @@ export const PipelinePage = () => {
   const [loading, setLoading] = useState(true);
   const [selectedVideo, setSelectedVideo] = useState<string | null>(null);
   const [updating, setUpdating] = useState<string | null>(null);
+  const { activeChannel } = useChannel();
+  const { user } = useAuth();
 
   useEffect(() => {
     const unsubscribe = subscribeToVideos((data) => {
-      setVideos(data);
+      // Filter to only this user's videos for the active channel
+      const filtered = data.filter(v => {
+        if (v.authorUid && user?.uid && v.authorUid !== user.uid) return false;
+        if (activeChannel && v.channelId && v.channelId !== activeChannel.channelId) return false;
+        return true;
+      });
+      setVideos(filtered);
       setLoading(false);
     });
     return () => unsubscribe();
-  }, []);
+  }, [user, activeChannel]);
 
   const handleStageOverride = async (videoId: string, stageId: string) => {
     setUpdating(videoId);
@@ -336,7 +349,7 @@ export const PipelinePage = () => {
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          publishVideo(video.id!, video.title);
+                          publishVideo(video.id!, video.title, video.channelId || activeChannel?.channelId);
                         }}
                         className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-bold hover:bg-primary/90 transition-colors"
                       >
