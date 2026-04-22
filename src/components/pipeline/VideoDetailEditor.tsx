@@ -31,6 +31,8 @@ export const VideoDetailEditor = () => {
   const [shortVideoUrl, setShortVideoUrl] = useState<string | null>(null);
   const [isEmbeddingAffiliate, setIsEmbeddingAffiliate] = useState(false);
   const [affiliateResult, setAffiliateResult] = useState<any>(null);
+  const [isAssembling, setIsAssembling] = useState(false);
+  const [isSavingAffiliate, setIsSavingAffiliate] = useState(false);
 
   // Subscribe to all videos, pick the one matching videoId (or first in queue)
   useEffect(() => {
@@ -114,6 +116,62 @@ export const VideoDetailEditor = () => {
       toast.error(err.message || "Upload failed");
     } finally {
       setIsUploading(false);
+    }
+  };
+
+  const handleAssemble = async () => {
+    if (!video?.id) return;
+    setIsAssembling(true);
+    try {
+      const script = video.script
+        ? `${video.script.hook}\n\n${video.script.body}\n\n${video.script.outro}`
+        : video.title;
+      const resp = await fetch(`${API_BASE_URL}/api/video/assemble`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: video.title,
+          script: script.substring(0, 500),
+          keywords: video.visualKeywords?.length ? video.visualKeywords : [video.niche || "general", video.title.split(" ").slice(0, 3).join(" ")],
+          niche: video.niche || "General",
+        }),
+      });
+      const data = await resp.json();
+      if (!resp.ok || !data.success) throw new Error(data.error || "Assembly failed");
+      await updateDoc(doc(db, "videos", video.id), {
+        videoBase64: data.videoBase64 || null,
+        videoDurationSec: data.durationSec,
+        videoFileSizeBytes: data.fileSizeBytes,
+        videoAssembled: true,
+        stage: "seo",
+        progress: 100,
+      });
+      toast.success(`Video assembled — ${data.durationSec}s MP4 ready`);
+    } catch (err: any) {
+      toast.error(err.message || "Assembly failed — check backend logs");
+    } finally {
+      setIsAssembling(false);
+    }
+  };
+
+  const handleSaveAffiliateScript = async () => {
+    if (!video?.id || !affiliateResult?.rewrittenScript) return;
+    setIsSavingAffiliate(true);
+    try {
+      const lines = affiliateResult.rewrittenScript.split("\n\n");
+      const hook = lines[0] || video.script?.hook || "";
+      const outro = lines[lines.length - 1] || video.script?.outro || "";
+      const body = lines.slice(1, -1).join("\n\n") || video.script?.body || "";
+      await updateDoc(doc(db, "videos", video.id), {
+        script: { hook, body, outro },
+        affiliateScriptSaved: true,
+      });
+      toast.success("Affiliate script saved — Script tab updated");
+      setAffiliateResult(null);
+    } catch (err: any) {
+      toast.error("Failed to save script");
+    } finally {
+      setIsSavingAffiliate(false);
     }
   };
 
@@ -317,12 +375,22 @@ export const VideoDetailEditor = () => {
                     </div>
                   ))}
                   {affiliateResult.rewrittenScript && (
-                    <button
-                      onClick={() => navigator.clipboard.writeText(affiliateResult.rewrittenScript)}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-secondary text-xs font-mono text-muted-foreground hover:text-foreground transition-colors w-full justify-center"
-                    >
-                      <Copy className="h-3 w-3" /> Copy Affiliate Script
-                    </button>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => navigator.clipboard.writeText(affiliateResult.rewrittenScript)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-secondary text-xs font-mono text-muted-foreground hover:text-foreground transition-colors flex-1 justify-center"
+                      >
+                        <Copy className="h-3 w-3" /> Copy
+                      </button>
+                      <button
+                        onClick={handleSaveAffiliateScript}
+                        disabled={isSavingAffiliate}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-green-600/20 border border-green-500/30 text-green-400 text-xs font-mono hover:bg-green-600/30 transition-colors flex-1 justify-center disabled:opacity-50"
+                      >
+                        {isSavingAffiliate ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle2 className="h-3 w-3" />}
+                        Save to Script
+                      </button>
+                    </div>
                   )}
                 </div>
               )}
@@ -382,6 +450,21 @@ export const VideoDetailEditor = () => {
               </div>
             ) : (
               <p className="text-sm text-muted-foreground font-mono">No visual keywords yet — generated during visuals stage</p>
+            )}
+            {!video.videoAssembled && (
+              <div className="mt-4">
+                <button
+                  onClick={handleAssemble}
+                  disabled={isAssembling}
+                  className="flex items-center gap-2 px-4 py-2 bg-purple-600/20 border border-purple-500/30 text-purple-400 rounded-lg text-xs font-mono hover:bg-purple-600/30 transition-colors disabled:opacity-50"
+                >
+                  {isAssembling ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Scissors className="h-3.5 w-3.5" />}
+                  {isAssembling ? "Assembling MP4..." : "Assemble Video Now"}
+                </button>
+                <p className="text-[10px] font-mono text-muted-foreground mt-1.5">
+                  Combines stock footage + voiceover into an MP4 using FFmpeg on the backend.
+                </p>
+              </div>
             )}
             {video.videoAssembled && (
               <div className="bg-success/10 border border-success/30 rounded-lg p-4 mt-4">

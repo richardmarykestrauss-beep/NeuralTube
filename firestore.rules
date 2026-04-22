@@ -118,7 +118,7 @@ service cloud.firestore {
     function isValidVideo(data) {
       return hasRequiredFields(['title', 'stage', 'authorUid']) &&
              data.title is string && data.title.size() < 200 &&
-             data.stage in ['research', 'ideation', 'scripting', 'voiceover', 'visuals', 'thumbnail', 'seo', 'review', 'publish', 'error'] &&
+             data.stage in ['research', 'ideation', 'scripting', 'voiceover', 'visuals', 'thumbnail', 'assembly', 'seo', 'review', 'publish', 'error'] &&
              data.authorUid is string &&
              (!('progress' in data) || (data.progress is number && data.progress >= 0 && data.progress <= 100)) &&
              (!('eta' in data) || (data.eta is string && data.eta.size() < 50)) &&
@@ -144,8 +144,13 @@ service cloud.firestore {
     match /users/{userId} {
       allow read: if isOwner(userId) || isAdmin();
       allow create: if isOwner(userId) && isValidUser(request.resource.data) && request.resource.data.role == 'user';
-      allow update: if (isOwner(userId) || isAdmin()) && isValidUser(request.resource.data) && 
+      allow update: if (isOwner(userId) || isAdmin()) && isValidUser(request.resource.data) &&
                       (isAdmin() || request.resource.data.role == resource.data.role);
+
+      // Multi-channel subcollection — only the owning user can read/write their channels
+      match /channels/{channelId} {
+        allow read, write: if isOwner(userId);
+      }
     }
 
     match /trends/{trendId} {
